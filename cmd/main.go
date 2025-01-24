@@ -18,11 +18,15 @@ package main
 
 import (
 	"context"
-	"os"
-
+	"encoding/json"
+	"fmt"
 	"github.com/go-logr/logr"
 	"github.com/spf13/pflag"
 	"go.uber.org/zap/zapcore"
+	"k8s.io/apimachinery/pkg/apis/meta/v1/unstructured"
+	"os"
+	"sigs.k8s.io/controller-runtime/pkg/client"
+	"sigs.k8s.io/controller-runtime/pkg/log"
 
 	// Import all Kubernetes client auth plugins (e.g. Azure, GCP, OIDC, etc.)
 	// to ensure that exec-entrypoint and run can make use of them.
@@ -57,6 +61,46 @@ func init() {
 	utilruntime.Must(policyinfo.AddToScheme(scheme))
 	//+kubebuilder:scaffold:scheme
 }
+
+func printCacheContents(ctx context.Context, cacheClient client.Reader, scheme *runtime.Scheme) {
+	logger := log.FromContext(ctx).WithName("!!!!!CachePrinter")
+	logger.Info("printing local cache objs...")
+
+	// Iterate over all GroupVersionKinds registered in the scheme
+	for gvk, _ := range scheme.AllKnownTypes() {
+		// Dynamically create an unstructured list to fetch objects
+		objList := &unstructured.UnstructuredList{}
+		objList.SetGroupVersionKind(gvk)
+
+		// List objects in the cache for the given GVK
+		if err := cacheClient.List(ctx, objList); err != nil {
+			//logger.Error(err, "Failed to list objects from cache", "GVK", gvk, "objType", objType)
+			continue
+		}
+
+		// Print each object in the list
+		fmt.Printf("---- Objects for GVK %v:\n ----", gvk)
+		for _, obj := range objList.Items {
+			// Convert the object to JSON for detailed output
+			objJSON, err := json.MarshalIndent(obj.Object, "", "  ")
+			if err != nil {
+				fmt.Printf("- Failed to marshal object: %v\n", err)
+				continue
+			}
+
+			fmt.Printf("- Full Object Details:\n%s\n", string(objJSON))
+		}
+	}
+}
+
+//func startCacheLogger(ctx context.Context, kubeClient client.Client, scheme *runtime.Scheme) {
+//	go func() {
+//		for {
+//			printCacheContents(ctx, kubeClient, scheme)
+//			time.Sleep(30 * time.Second) // Adjust the interval as needed
+//		}
+//	}()
+//}
 
 func main() {
 	infoLogger := getLoggerWithLogLevel("info")
@@ -148,6 +192,9 @@ func main() {
 		setupLog.Error(err, "unable to set up ready check")
 		os.Exit(1)
 	}
+
+	printCacheContents(ctx, mgr.GetClient(), mgr.GetScheme())
+
 	setupLog.Info("starting controller manager")
 	if err := mgr.Start(ctx); err != nil {
 		setupLog.Error(err, "problem running controller manager")

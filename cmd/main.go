@@ -195,7 +195,7 @@ func main() {
 		os.Exit(1)
 	}
 
-	printCacheContents(ctx, mgr.GetClient(), mgr.GetScheme())
+	//printCacheContents(ctx, mgr.GetClient(), mgr.GetScheme())
 	go func() {
 		if err := http.ListenAndServe("localhost:6060", nil); err != nil {
 			setupLog.Error(err, "Error starting HTTP server")

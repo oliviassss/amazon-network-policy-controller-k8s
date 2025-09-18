@@ -239,3 +239,55 @@ func TestIsPodNetworkReady(t *testing.T) {
 		})
 	}
 }
+
+func TestStripDownPodObject(t *testing.T) {
+	succeededPod := &corev1.Pod{
+		ObjectMeta: metav1.ObjectMeta{
+			Name:      "succeeded-pod",
+			Namespace: "test-ns",
+			Labels:    map[string]string{"app": "test"},
+		},
+		Spec: corev1.PodSpec{
+			Containers: []corev1.Container{
+				{Name: "container1", Ports: []corev1.ContainerPort{{ContainerPort: 80}}},
+			},
+		},
+		Status: corev1.PodStatus{
+			Phase:   corev1.PodSucceeded,
+			PodIP:   "10.0.0.1",
+			HostIP:  "10.0.1.1",
+			PodIPs:  []corev1.PodIP{{IP: "10.0.0.1"}},
+			HostIPs: []corev1.HostIP{{IP: "10.0.1.1"}},
+		},
+	}
+
+	runningPod := &corev1.Pod{
+		ObjectMeta: metav1.ObjectMeta{
+			Name:      "running-pod",
+			Namespace: "test-ns",
+			Labels:    map[string]string{"app": "test"},
+		},
+		Spec: corev1.PodSpec{
+			Containers: []corev1.Container{
+				{Name: "container1", Ports: []corev1.ContainerPort{{ContainerPort: 80}}},
+			},
+		},
+		Status: corev1.PodStatus{
+			Phase:   corev1.PodRunning,
+			PodIP:   "10.0.0.2",
+			HostIP:  "10.0.1.1",
+			PodIPs:  []corev1.PodIP{{IP: "10.0.0.2"}},
+			HostIPs: []corev1.HostIP{{IP: "10.0.1.1"}},
+		},
+	}
+
+	// Test succeeded pod
+	strippedSucceeded := stripDownPodObject(succeededPod)
+	assert.Equal(t, corev1.PodSucceeded, strippedSucceeded.Status.Phase, "Phase field must be preserved for succeeded pod")
+	assert.False(t, IsPodNetworkReady(strippedSucceeded), "IsPodNetworkReady should return false for succeeded pod")
+
+	// Test running pod
+	strippedRunning := stripDownPodObject(runningPod)
+	assert.Equal(t, corev1.PodRunning, strippedRunning.Status.Phase, "Phase field must be preserved for running pod")
+	assert.True(t, IsPodNetworkReady(strippedRunning), "IsPodNetworkReady should return true for running pod")
+}

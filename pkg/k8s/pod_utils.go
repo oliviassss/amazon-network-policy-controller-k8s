@@ -90,6 +90,7 @@ func stripDownPodObject(pod *corev1.Pod) *corev1.Pod {
 		HostIPs: pod.Status.HostIPs,
 		PodIP:   pod.Status.PodIP,
 		PodIPs:  pod.Status.PodIPs,
+		Phase:   pod.Status.Phase,
 	}
 	return pod
 }

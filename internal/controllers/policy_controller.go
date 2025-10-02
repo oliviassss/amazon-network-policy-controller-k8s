@@ -18,6 +18,8 @@ package controllers
 
 import (
 	"context"
+	"fmt"
+	"strings"
 	"time"
 
 	policyinfo "github.com/aws/amazon-network-policy-controller-k8s/api/v1alpha1"
@@ -43,6 +45,7 @@ import (
 const (
 	controllerName      = "policy"
 	policyFinalizerName = "networking.k8s.aws/resources"
+	anpFinalizerName    = "networking.k8s.aws/anp-resources"
 )
 
 func NewPolicyReconciler(k8sClient client.Client, policyEndpointsManager policyendpoints.PolicyEndpointsManager,
@@ -78,6 +81,9 @@ type policyReconciler struct {
 //+kubebuilder:rbac:groups=networking.k8s.aws,resources=policyendpoints,verbs=get;list;watch;create;update;patch;delete
 //+kubebuilder:rbac:groups=networking.k8s.aws,resources=policyendpoints/status,verbs=get;update;patch
 //+kubebuilder:rbac:groups=networking.k8s.aws,resources=policyendpoints/finalizers,verbs=update
+//+kubebuilder:rbac:groups=networking.k8s.aws,resources=applicationnetworkpolicies,verbs=get;list;watch;update;patch
+//+kubebuilder:rbac:groups=networking.k8s.aws,resources=applicationnetworkpolicies/status,verbs=get;update;patch
+//+kubebuilder:rbac:groups=networking.k8s.aws,resources=applicationnetworkpolicies/finalizers,verbs=update
 //+kubebuilder:rbac:groups="",resources=pods,verbs=get;list;watch
 //+kubebuilder:rbac:groups="",resources=namespaces,verbs=get;list;watch
 //+kubebuilder:rbac:groups="",resources=services,verbs=get;list;watch
@@ -110,6 +116,7 @@ func (r *policyReconciler) SetupWithManager(ctx context.Context, mgr ctrl.Manage
 	return ctrl.NewControllerManagedBy(mgr).
 		Named(controllerName).
 		Watches(&networking.NetworkPolicy{}, policyEventHandler).
+		Watches(&policyinfo.ApplicationNetworkPolicy{}, policyEventHandler).
 		Watches(&corev1.Pod{}, podEventHandler).
 		Watches(&corev1.Namespace{}, nsEventHandler).
 		Watches(&corev1.Service{}, svcEventHandler).
@@ -120,31 +127,86 @@ func (r *policyReconciler) SetupWithManager(ctx context.Context, mgr ctrl.Manage
 }
 
 func (r *policyReconciler) reconcile(ctx context.Context, request reconcile.Request) error {
-	policy := &networking.NetworkPolicy{}
-	if err := r.k8sClient.Get(ctx, request.NamespacedName, policy); err != nil {
-		r.logger.Info("Unable to get policy", "resource", policy, "err", err)
-		return client.IgnoreNotFound(err)
+	var errors []error
+
+	// Try NetworkPolicy
+	networkPolicy := &networking.NetworkPolicy{}
+	if err := r.k8sClient.Get(ctx, request.NamespacedName, networkPolicy); err == nil {
+		if !networkPolicy.DeletionTimestamp.IsZero() {
+			if err := r.cleanupNetworkPolicy(ctx, networkPolicy); err != nil {
+				errors = append(errors, err)
+			}
+		} else {
+			if err := r.reconcileNetworkPolicy(ctx, networkPolicy); err != nil {
+				errors = append(errors, err)
+			}
+		}
+	} else if client.IgnoreNotFound(err) != nil {
+		r.logger.Info("Unable to get NetworkPolicy", "resource", request.NamespacedName, "err", err)
+		errors = append(errors, err)
 	}
-	if !policy.DeletionTimestamp.IsZero() {
-		return r.cleanupPolicy(ctx, policy)
+
+	// Try ApplicationNetworkPolicy
+	applicationNetworkPolicy := &policyinfo.ApplicationNetworkPolicy{}
+	if err := r.k8sClient.Get(ctx, request.NamespacedName, applicationNetworkPolicy); err == nil {
+		if !applicationNetworkPolicy.DeletionTimestamp.IsZero() {
+			if err := r.cleanupApplicationNetworkPolicy(ctx, applicationNetworkPolicy); err != nil {
+				errors = append(errors, err)
+			}
+		} else {
+			if err := r.reconcileApplicationNetworkPolicy(ctx, applicationNetworkPolicy); err != nil {
+				errors = append(errors, err)
+			}
+		}
+	} else if client.IgnoreNotFound(err) != nil {
+		r.logger.Info("Unable to get ApplicationNetworkPolicy", "resource", request.NamespacedName, "err", err)
+		errors = append(errors, err)
 	}
-	return r.reconcilePolicy(ctx, policy)
+
+	// Return constructed error if any occurred
+	if len(errors) > 0 {
+		var errorMessages []string
+		for _, err := range errors {
+			errorMessages = append(errorMessages, err.Error())
+		}
+		return fmt.Errorf("Failed to reconcile NetworkPolicy or ApplicationNetworkPolicy: %s", strings.Join(errorMessages, "; "))
+	}
+	return nil
 }
 
-func (r *policyReconciler) reconcilePolicy(ctx context.Context, policy *networking.NetworkPolicy) error {
-	if err := r.finalizerManager.AddFinalizers(ctx, policy, policyFinalizerName); err != nil {
+func (r *policyReconciler) reconcileNetworkPolicy(ctx context.Context, networkPolicy *networking.NetworkPolicy) error {
+	if err := r.finalizerManager.AddFinalizers(ctx, networkPolicy, policyFinalizerName); err != nil {
 		return err
 	}
-	return r.policyEndpointsManager.Reconcile(ctx, policy)
+	return r.policyEndpointsManager.Reconcile(ctx, networkPolicy)
 }
 
-func (r *policyReconciler) cleanupPolicy(ctx context.Context, policy *networking.NetworkPolicy) error {
-	if k8s.HasFinalizer(policy, policyFinalizerName) {
-		r.policyTracker.RemovePolicy(policy)
-		if err := r.policyEndpointsManager.Cleanup(ctx, policy); err != nil {
+func (r *policyReconciler) cleanupNetworkPolicy(ctx context.Context, networkPolicy *networking.NetworkPolicy) error {
+	if k8s.HasFinalizer(networkPolicy, policyFinalizerName) {
+		r.policyTracker.RemovePolicy(networkPolicy)
+		if err := r.policyEndpointsManager.Cleanup(ctx, networkPolicy); err != nil {
 			return err
 		}
-		if err := r.finalizerManager.RemoveFinalizers(ctx, policy, policyFinalizerName); err != nil {
+		if err := r.finalizerManager.RemoveFinalizers(ctx, networkPolicy, policyFinalizerName); err != nil {
+			return err
+		}
+	}
+	return nil
+}
+
+func (r *policyReconciler) reconcileApplicationNetworkPolicy(ctx context.Context, applicationNetworkPolicy *policyinfo.ApplicationNetworkPolicy) error {
+	if err := r.finalizerManager.AddFinalizers(ctx, applicationNetworkPolicy, anpFinalizerName); err != nil {
+		return err
+	}
+	return r.policyEndpointsManager.ReconcileANP(ctx, applicationNetworkPolicy)
+}
+
+func (r *policyReconciler) cleanupApplicationNetworkPolicy(ctx context.Context, applicationNetworkPolicy *policyinfo.ApplicationNetworkPolicy) error {
+	if k8s.HasFinalizer(applicationNetworkPolicy, anpFinalizerName) {
+		if err := r.policyEndpointsManager.CleanupANP(ctx, applicationNetworkPolicy); err != nil {
+			return err
+		}
+		if err := r.finalizerManager.RemoveFinalizers(ctx, applicationNetworkPolicy, anpFinalizerName); err != nil {
 			return err
 		}
 	}

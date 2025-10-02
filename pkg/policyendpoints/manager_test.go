@@ -49,15 +49,16 @@ func Test_policyEndpointsManager_computePolicyEndpoints(t *testing.T) {
 			equality.Semantic.DeepEqual(ep.OwnerReferences, []metav1.OwnerReference{
 				{
 					APIVersion:         "networking.k8s.io/v1",
-					Kind:               "NetworkPolicy",
 					Name:               netpol.Name,
+					Kind:               "NetworkPolicy",
 					BlockOwnerDeletion: &blockOwnerDeletion,
 					Controller:         &isController,
 				},
 			}) && equality.Semantic.DeepEqual(ep.Spec.PolicyRef,
 			policyinfo.PolicyReference{
 				Namespace: netpol.Namespace,
-				Name:      netpol.Name}) &&
+				Name:      netpol.Name,
+			}) &&
 			equality.Semantic.DeepEqual(ep.Spec.PodSelector, &netpol.Spec.PodSelector) &&
 			equality.Semantic.DeepEqual(ep.Spec.PodIsolation, netpol.Spec.PolicyTypes)
 	}
@@ -552,4 +553,455 @@ func Test_processPolicyEndpoints(t *testing.T) {
 	assert.Equal(t, "1.2.3.5", string(pes[0].Spec.Egress[0].CIDR))
 	assert.Equal(t, 3, len(pes[0].Spec.Ingress[0].Ports))
 	assert.Equal(t, 2, len(pes[0].Spec.Egress[0].Ports))
+}
+
+func Test_policyEndpointsManager_computeApplicationNetworkPolicyEndpoints(t *testing.T) {
+	type args struct {
+		anp                  *policyinfo.ApplicationNetworkPolicy
+		policyEndpoints      []policyinfo.PolicyEndpoint
+		ingressRules         []policyinfo.EndpointInfo
+		egressRules          []policyinfo.EndpointInfo
+		podselectorEndpoints []policyinfo.PodEndpoint
+	}
+	type want struct {
+		createCount int
+		updateCount int
+		deleteCount int
+	}
+
+	protocolTCP := corev1.ProtocolTCP
+	port443 := int32(443)
+	blockOwnerDeletion := true
+	isController := true
+
+	tests := []struct {
+		name string
+		args args
+		want want
+	}{
+		{
+			name: "ANP with FQDN egress rules",
+			args: args{
+				anp: &policyinfo.ApplicationNetworkPolicy{
+					ObjectMeta: metav1.ObjectMeta{
+						Name:      "test-anp",
+						Namespace: "default",
+					},
+					Spec: policyinfo.ApplicationNetworkPolicySpec{
+						PodSelector: metav1.LabelSelector{
+							MatchLabels: map[string]string{"app": "web"},
+						},
+						PolicyTypes: []networking.PolicyType{networking.PolicyTypeEgress},
+					},
+				},
+				policyEndpoints: []policyinfo.PolicyEndpoint{},
+				ingressRules:    []policyinfo.EndpointInfo{},
+				egressRules: []policyinfo.EndpointInfo{
+					{
+						DomainName: "example.com",
+						Ports: []policyinfo.Port{
+							{Port: &port443, Protocol: &protocolTCP},
+						},
+					},
+				},
+				podselectorEndpoints: []policyinfo.PodEndpoint{},
+			},
+			want: want{
+				createCount: 1,
+				updateCount: 0,
+				deleteCount: 0,
+			},
+		},
+		{
+			name: "ANP with ingress and egress CIDR rules",
+			args: args{
+				anp: &policyinfo.ApplicationNetworkPolicy{
+					ObjectMeta: metav1.ObjectMeta{
+						Name:      "test-anp-cidr",
+						Namespace: "default",
+					},
+					Spec: policyinfo.ApplicationNetworkPolicySpec{
+						PodSelector: metav1.LabelSelector{
+							MatchLabels: map[string]string{"app": "web"},
+						},
+						PolicyTypes: []networking.PolicyType{networking.PolicyTypeIngress, networking.PolicyTypeEgress},
+					},
+				},
+				policyEndpoints: []policyinfo.PolicyEndpoint{},
+				ingressRules: []policyinfo.EndpointInfo{
+					{
+						CIDR: "172.17.0.0/16",
+						Ports: []policyinfo.Port{
+							{Port: &port443, Protocol: &protocolTCP},
+						},
+					},
+				},
+				egressRules: []policyinfo.EndpointInfo{
+					{
+						CIDR: "10.0.0.0/8",
+						Ports: []policyinfo.Port{
+							{Port: &port443, Protocol: &protocolTCP},
+						},
+					},
+				},
+				podselectorEndpoints: []policyinfo.PodEndpoint{},
+			},
+			want: want{
+				createCount: 1,
+				updateCount: 0,
+				deleteCount: 0,
+			},
+		},
+		{
+			name: "ANP with ingress and egress FQDN rules",
+			args: args{
+				anp: &policyinfo.ApplicationNetworkPolicy{
+					ObjectMeta: metav1.ObjectMeta{
+						Name:      "test-anp-fqdn",
+						Namespace: "default",
+					},
+					Spec: policyinfo.ApplicationNetworkPolicySpec{
+						PodSelector: metav1.LabelSelector{
+							MatchLabels: map[string]string{"app": "web"},
+						},
+						PolicyTypes: []networking.PolicyType{networking.PolicyTypeIngress, networking.PolicyTypeEgress},
+					},
+				},
+				policyEndpoints: []policyinfo.PolicyEndpoint{},
+				ingressRules: []policyinfo.EndpointInfo{
+					{
+						CIDR: "172.17.0.0/16",
+						Ports: []policyinfo.Port{
+							{Port: &port443, Protocol: &protocolTCP},
+						},
+					},
+				},
+				egressRules: []policyinfo.EndpointInfo{
+					{
+						DomainName: "*.amazonaws.com",
+						Ports: []policyinfo.Port{
+							{Port: &port443, Protocol: &protocolTCP},
+						},
+					},
+				},
+				podselectorEndpoints: []policyinfo.PodEndpoint{},
+			},
+			want: want{
+				createCount: 1,
+				updateCount: 0,
+				deleteCount: 0,
+			},
+		},
+		{
+			name: "ANP with only ingress rules",
+			args: args{
+				anp: &policyinfo.ApplicationNetworkPolicy{
+					ObjectMeta: metav1.ObjectMeta{
+						Name:      "test-anp-ingress",
+						Namespace: "default",
+					},
+					Spec: policyinfo.ApplicationNetworkPolicySpec{
+						PodSelector: metav1.LabelSelector{
+							MatchLabels: map[string]string{"app": "web"},
+						},
+						PolicyTypes: []networking.PolicyType{networking.PolicyTypeIngress},
+					},
+				},
+				policyEndpoints: []policyinfo.PolicyEndpoint{},
+				ingressRules: []policyinfo.EndpointInfo{
+					{
+						CIDR: "172.17.0.0/16",
+						Ports: []policyinfo.Port{
+							{Port: &port443, Protocol: &protocolTCP},
+						},
+					},
+				},
+				egressRules:          []policyinfo.EndpointInfo{},
+				podselectorEndpoints: []policyinfo.PodEndpoint{},
+			},
+			want: want{
+				createCount: 1,
+				updateCount: 0,
+				deleteCount: 0,
+			},
+		},
+		{
+			name: "ANP update existing endpoint",
+			args: args{
+				anp: &policyinfo.ApplicationNetworkPolicy{
+					ObjectMeta: metav1.ObjectMeta{
+						Name:      "test-anp-update",
+						Namespace: "default",
+						UID:       "test-uid",
+					},
+					Spec: policyinfo.ApplicationNetworkPolicySpec{
+						PodSelector: metav1.LabelSelector{
+							MatchLabels: map[string]string{"app": "web"},
+						},
+						PolicyTypes: []networking.PolicyType{networking.PolicyTypeEgress},
+					},
+				},
+				policyEndpoints: []policyinfo.PolicyEndpoint{
+					{
+						ObjectMeta: metav1.ObjectMeta{
+							Name:      "existing-endpoint",
+							Namespace: "default",
+							OwnerReferences: []metav1.OwnerReference{
+								{
+									APIVersion: "networking.k8s.aws/v1alpha1",
+									Name:       "test-anp-update",
+									UID:        "test-uid",
+								},
+							},
+						},
+						Spec: policyinfo.PolicyEndpointSpec{
+							PolicyRef: policyinfo.PolicyReference{
+								Name:      "test-anp-update",
+								Namespace: "default",
+							},
+						},
+					},
+				},
+				ingressRules: []policyinfo.EndpointInfo{},
+				egressRules: []policyinfo.EndpointInfo{
+					{
+						DomainName: "example.com",
+						Ports: []policyinfo.Port{
+							{Port: &port443, Protocol: &protocolTCP},
+						},
+					},
+				},
+				podselectorEndpoints: []policyinfo.PodEndpoint{},
+			},
+			want: want{
+				createCount: 0,
+				updateCount: 1,
+				deleteCount: 0,
+			},
+		},
+		{
+			name: "ANP delete unused endpoint",
+			args: args{
+				anp: &policyinfo.ApplicationNetworkPolicy{
+					ObjectMeta: metav1.ObjectMeta{
+						Name:      "test-anp-delete",
+						Namespace: "default",
+						UID:       "test-uid",
+					},
+					Spec: policyinfo.ApplicationNetworkPolicySpec{
+						PodSelector: metav1.LabelSelector{
+							MatchLabels: map[string]string{"app": "web"},
+						},
+						PolicyTypes: []networking.PolicyType{networking.PolicyTypeEgress},
+					},
+				},
+				policyEndpoints: []policyinfo.PolicyEndpoint{
+					{
+						ObjectMeta: metav1.ObjectMeta{
+							Name:      "unused-endpoint",
+							Namespace: "default",
+							OwnerReferences: []metav1.OwnerReference{
+								{
+									APIVersion: "networking.k8s.aws/v1alpha1",
+									Name:       "test-anp-delete",
+									UID:        "test-uid",
+								},
+							},
+						},
+						Spec: policyinfo.PolicyEndpointSpec{
+							PolicyRef: policyinfo.PolicyReference{
+								Name:      "test-anp-delete",
+								Namespace: "default",
+							},
+							Egress: []policyinfo.EndpointInfo{
+								{
+									DomainName: "old-domain.com",
+								},
+							},
+						},
+					},
+				},
+				ingressRules: []policyinfo.EndpointInfo{},
+				egressRules: []policyinfo.EndpointInfo{
+					{
+						DomainName: "new-domain.com",
+						Ports: []policyinfo.Port{
+							{Port: &port443, Protocol: &protocolTCP},
+						},
+					},
+				},
+				podselectorEndpoints: []policyinfo.PodEndpoint{},
+			},
+			want: want{
+				createCount: 0,
+				updateCount: 1, // The unused endpoint gets converted to update (policy invariant)
+				deleteCount: 0,
+			},
+		},
+		{
+			name: "ANP with multiple endpoints - delete extra",
+			args: args{
+				anp: &policyinfo.ApplicationNetworkPolicy{
+					ObjectMeta: metav1.ObjectMeta{
+						Name:      "test-anp-multi",
+						Namespace: "default",
+						UID:       "test-uid",
+					},
+					Spec: policyinfo.ApplicationNetworkPolicySpec{
+						PodSelector: metav1.LabelSelector{
+							MatchLabels: map[string]string{"app": "web"},
+						},
+						PolicyTypes: []networking.PolicyType{networking.PolicyTypeEgress},
+					},
+				},
+				policyEndpoints: []policyinfo.PolicyEndpoint{
+					{
+						ObjectMeta: metav1.ObjectMeta{
+							Name:      "endpoint-1",
+							Namespace: "default",
+						},
+						Spec: policyinfo.PolicyEndpointSpec{
+							Egress: []policyinfo.EndpointInfo{
+								{DomainName: "keep.com"},
+							},
+						},
+					},
+					{
+						ObjectMeta: metav1.ObjectMeta{
+							Name:      "endpoint-2",
+							Namespace: "default",
+						},
+						Spec: policyinfo.PolicyEndpointSpec{
+							Egress: []policyinfo.EndpointInfo{
+								{DomainName: "delete.com"},
+							},
+						},
+					},
+				},
+				ingressRules: []policyinfo.EndpointInfo{},
+				egressRules: []policyinfo.EndpointInfo{
+					{DomainName: "keep.com"},
+				},
+				podselectorEndpoints: []policyinfo.PodEndpoint{},
+			},
+			want: want{
+				createCount: 0,
+				updateCount: 1,
+				deleteCount: 1,
+			},
+		},
+	}
+
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			m := &policyEndpointsManager{
+				endpointChunkSize: 100,
+				logger:            zap.New(),
+			}
+			createList, updateList, deleteList, err := m.computeApplicationNetworkPolicyEndpoints(
+				tt.args.anp, tt.args.policyEndpoints, tt.args.ingressRules, tt.args.egressRules, tt.args.podselectorEndpoints)
+
+			assert.NoError(t, err)
+			assert.Equal(t, tt.want.createCount, len(createList))
+			assert.Equal(t, tt.want.updateCount, len(updateList))
+			assert.Equal(t, tt.want.deleteCount, len(deleteList))
+
+			if len(createList) > 0 {
+				ep := createList[0]
+				assert.Equal(t, tt.args.anp.Namespace, ep.Namespace)
+				assert.Equal(t, tt.args.anp.Name+"-", ep.GenerateName)
+				assert.Equal(t, []metav1.OwnerReference{
+					{
+						APIVersion:         "networking.k8s.aws/v1alpha1",
+						Name:               tt.args.anp.Name,
+						UID:                tt.args.anp.UID,
+						BlockOwnerDeletion: &blockOwnerDeletion,
+						Kind:               "ApplicationNetworkPolicy",
+						Controller:         &isController,
+					},
+				}, ep.OwnerReferences)
+			}
+		})
+	}
+}
+
+func Test_processANPPolicyEndpoints(t *testing.T) {
+	m := &policyEndpointsManager{
+		logger: zap.New(),
+	}
+
+	port443 := int32(443)
+	pTCP := corev1.ProtocolTCP
+
+	pes := m.processANPPolicyEndpoints([]policyinfo.PolicyEndpoint{
+		{
+			Spec: policyinfo.PolicyEndpointSpec{
+				Egress: []policyinfo.EndpointInfo{
+					{
+						DomainName: "example.com",
+						Ports: []policyinfo.Port{
+							{Port: &port443, Protocol: &pTCP},
+						},
+					},
+					{
+						DomainName: "example.com",
+						Ports: []policyinfo.Port{
+							{Port: &port443, Protocol: &pTCP},
+						},
+					},
+				},
+			},
+		},
+	})
+
+	assert.Equal(t, 1, len(pes))
+	assert.Equal(t, 1, len(pes[0].Spec.Egress))
+	assert.Equal(t, policyinfo.DomainName("example.com"), pes[0].Spec.Egress[0].DomainName)
+	assert.Equal(t, 2, len(pes[0].Spec.Egress[0].Ports))
+}
+
+func Test_getEndpointInfoKey(t *testing.T) {
+	m := &policyEndpointsManager{}
+	port443 := int32(443)
+	pTCP := corev1.ProtocolTCP
+
+	tests := []struct {
+		name string
+		info policyinfo.EndpointInfo
+		want string
+	}{
+		{
+			name: "FQDN endpoint",
+			info: policyinfo.EndpointInfo{
+				DomainName: "example.com",
+				Ports: []policyinfo.Port{
+					{Port: &port443, Protocol: &pTCP},
+				},
+			},
+		},
+		{
+			name: "CIDR endpoint",
+			info: policyinfo.EndpointInfo{
+				CIDR: "10.0.0.0/8",
+				Ports: []policyinfo.Port{
+					{Port: &port443, Protocol: &pTCP},
+				},
+			},
+		},
+	}
+
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			key := m.getEndpointInfoKey(tt.info)
+			assert.NotEmpty(t, key)
+			// Verify same input produces same key
+			key2 := m.getEndpointInfoKey(tt.info)
+			assert.Equal(t, key, key2)
+		})
+	}
+
+	// Verify different inputs produce different keys
+	fqdnKey := m.getEndpointInfoKey(policyinfo.EndpointInfo{DomainName: "example.com"})
+	cidrKey := m.getEndpointInfoKey(policyinfo.EndpointInfo{CIDR: "10.0.0.0/8"})
+	assert.NotEqual(t, fqdnKey, cidrKey)
 }

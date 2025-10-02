@@ -50,13 +50,17 @@ type Port struct {
 // EndpointInfo defines the network endpoint information for the policy ingress/egress
 type EndpointInfo struct {
 	// CIDR is the network address(s) of the endpoint
-	CIDR NetworkAddress `json:"cidr"`
+	CIDR NetworkAddress `json:"cidr,omitempty"`
 
 	// Except is the exceptions to the CIDR ranges mentioned above.
 	Except []NetworkAddress `json:"except,omitempty"`
 
 	// Ports is the list of ports
 	Ports []Port `json:"ports,omitempty"`
+
+	// DomainName is the FQDN for the endpoint (mutually exclusive with CIDR, egress-only)
+	// Note: This field should only be used in egress rules, not ingress
+	DomainName DomainName `json:"domainName,omitempty"`
 }
 
 // PodEndpoint defines the summary information for the pods

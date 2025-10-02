@@ -26,6 +26,32 @@ rules:
 - apiGroups:
   - networking.k8s.aws
   resources:
+  - applicationnetworkpolicies
+  verbs:
+  - get
+  - list
+  - patch
+  - update
+  - watch
+- apiGroups:
+  - networking.k8s.aws
+  resources:
+  - applicationnetworkpolicies/finalizers
+  - policyendpoints/finalizers
+  verbs:
+  - update
+- apiGroups:
+  - networking.k8s.aws
+  resources:
+  - applicationnetworkpolicies/status
+  - policyendpoints/status
+  verbs:
+  - get
+  - patch
+  - update
+- apiGroups:
+  - networking.k8s.aws
+  resources:
   - policyendpoints
   verbs:
   - create
@@ -35,20 +61,6 @@ rules:
   - patch
   - update
   - watch
-- apiGroups:
-  - networking.k8s.aws
-  resources:
-  - policyendpoints/finalizers
-  verbs:
-  - update
-- apiGroups:
-  - networking.k8s.aws
-  resources:
-  - policyendpoints/status
-  verbs:
-  - get
-  - patch
-  - update
 - apiGroups:
   - networking.k8s.io
   resources:

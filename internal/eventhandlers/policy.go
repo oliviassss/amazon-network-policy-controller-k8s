@@ -18,8 +18,10 @@ package eventhandlers
 
 import (
 	"context"
+	"fmt"
 	"time"
 
+	policyinfo "github.com/aws/amazon-network-policy-controller-k8s/api/v1alpha1"
 	"github.com/aws/amazon-network-policy-controller-k8s/pkg/resolvers"
 
 	"github.com/aws/amazon-network-policy-controller-k8s/pkg/k8s"
@@ -28,6 +30,7 @@ import (
 	"k8s.io/apimachinery/pkg/api/equality"
 	"k8s.io/apimachinery/pkg/types"
 	"k8s.io/client-go/util/workqueue"
+	"sigs.k8s.io/controller-runtime/pkg/client"
 	"sigs.k8s.io/controller-runtime/pkg/event"
 	"sigs.k8s.io/controller-runtime/pkg/handler"
 	"sigs.k8s.io/controller-runtime/pkg/reconcile"
@@ -52,33 +55,59 @@ type enqueueRequestForPolicyEvent struct {
 }
 
 func (h *enqueueRequestForPolicyEvent) Create(_ context.Context, e event.CreateEvent, queue workqueue.TypedRateLimitingInterface[reconcile.Request]) {
-	policy := e.Object.(*networking.NetworkPolicy)
-	h.logger.V(1).Info("Handling create event", "policy", k8s.NamespacedName(policy))
-	h.enqueuePolicy(queue, policy, 0)
+	h.logger.V(1).Info("Handling create event", "policy", k8s.NamespacedName(e.Object))
+	h.enqueueGenericPolicy(queue, e.Object, 0)
 }
 
 func (h *enqueueRequestForPolicyEvent) Update(_ context.Context, e event.UpdateEvent, queue workqueue.TypedRateLimitingInterface[reconcile.Request]) {
-	oldPolicy := e.ObjectOld.(*networking.NetworkPolicy)
-	newPolicy := e.ObjectNew.(*networking.NetworkPolicy)
+	h.logger.V(1).Info("Handling update event", "policy", k8s.NamespacedName(e.ObjectNew))
 
-	h.logger.V(1).Info("Handling update event", "policy", k8s.NamespacedName(newPolicy))
-	if !equality.Semantic.DeepEqual(newPolicy.ResourceVersion, oldPolicy.ResourceVersion) && equality.Semantic.DeepEqual(oldPolicy.Spec, newPolicy.Spec) &&
-		equality.Semantic.DeepEqual(oldPolicy.DeletionTimestamp.IsZero(), newPolicy.DeletionTimestamp.IsZero()) {
-		return
+	// Handle both NetworkPolicy and ApplicationNetworkPolicy
+	switch oldObj := e.ObjectOld.(type) {
+	case *networking.NetworkPolicy:
+		newPolicy := e.ObjectNew.(*networking.NetworkPolicy)
+		if !equality.Semantic.DeepEqual(newPolicy.ResourceVersion, oldObj.ResourceVersion) && equality.Semantic.DeepEqual(oldObj.Spec, newPolicy.Spec) &&
+			equality.Semantic.DeepEqual(oldObj.DeletionTimestamp.IsZero(), newPolicy.DeletionTimestamp.IsZero()) {
+			return
+		}
+	case *policyinfo.ApplicationNetworkPolicy:
+		newPolicy := e.ObjectNew.(*policyinfo.ApplicationNetworkPolicy)
+		if !equality.Semantic.DeepEqual(newPolicy.ResourceVersion, oldObj.ResourceVersion) && equality.Semantic.DeepEqual(oldObj.Spec, newPolicy.Spec) &&
+			equality.Semantic.DeepEqual(oldObj.DeletionTimestamp.IsZero(), newPolicy.DeletionTimestamp.IsZero()) {
+			return
+		}
 	}
-	h.enqueuePolicy(queue, newPolicy, 0)
+
+	h.enqueueGenericPolicy(queue, e.ObjectNew, 0)
 }
 
 func (h *enqueueRequestForPolicyEvent) Delete(_ context.Context, e event.DeleteEvent, _ workqueue.TypedRateLimitingInterface[reconcile.Request]) {
-	policy := e.Object.(*networking.NetworkPolicy)
-	h.logger.V(1).Info("Handling delete event", "policy", k8s.NamespacedName(policy))
-	h.policyTracker.RemovePolicy(policy)
+	h.logger.V(1).Info("Handling delete event", "policy", k8s.NamespacedName(e.Object))
+
+	// Type-safe deletion - only handle known types
+	switch obj := e.Object.(type) {
+	case *networking.NetworkPolicy:
+		h.policyTracker.RemovePolicy(obj)
+	case *policyinfo.ApplicationNetworkPolicy:
+		h.policyTracker.RemoveGenericPolicy(obj)
+	default:
+		h.logger.Info("Unknown policy type in delete event", "type", fmt.Sprintf("%T", e.Object))
+	}
 }
 
 func (h *enqueueRequestForPolicyEvent) Generic(_ context.Context, e event.GenericEvent, q workqueue.TypedRateLimitingInterface[reconcile.Request]) {
-	policy := e.Object.(*networking.NetworkPolicy)
-	h.logger.V(1).Info("Handling generic event", "policy", k8s.NamespacedName(policy))
-	h.enqueuePolicy(q, policy, h.podUpdateBatchPeriodDuration)
+	h.logger.V(1).Info("Handling generic event", "policy", k8s.NamespacedName(e.Object))
+	h.enqueueGenericPolicy(q, e.Object, h.podUpdateBatchPeriodDuration)
+}
+
+func (h *enqueueRequestForPolicyEvent) enqueueGenericPolicy(queue workqueue.TypedRateLimitingInterface[reconcile.Request], obj client.Object, addAfter time.Duration) {
+	h.policyTracker.UpdateGenericPolicy(obj)
+	queue.AddAfter(reconcile.Request{
+		NamespacedName: types.NamespacedName{
+			Namespace: obj.GetNamespace(),
+			Name:      obj.GetName(),
+		},
+	}, addAfter)
 }
 
 func (h *enqueueRequestForPolicyEvent) enqueuePolicy(queue workqueue.TypedRateLimitingInterface[reconcile.Request], policy *networking.NetworkPolicy, addAfter time.Duration) {

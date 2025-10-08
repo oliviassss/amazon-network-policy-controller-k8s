@@ -2,7 +2,6 @@ package resolvers
 
 import (
 	"context"
-	"fmt"
 
 	policyinfo "github.com/aws/amazon-network-policy-controller-k8s/api/v1alpha1"
 	"github.com/aws/amazon-network-policy-controller-k8s/pkg/k8s"
@@ -37,11 +36,6 @@ type applicationNetworkPolicyEndpointsResolver struct {
 }
 
 func (r *applicationNetworkPolicyEndpointsResolver) ResolveApplicationNetworkPolicy(ctx context.Context, applicationNetworkPolicy *policyinfo.ApplicationNetworkPolicy) ([]policyinfo.EndpointInfo, []policyinfo.EndpointInfo, []policyinfo.PodEndpoint, error) {
-	// Validate ApplicationNetworkPolicy early
-	if err := validateApplicationNetworkPolicy(applicationNetworkPolicy); err != nil {
-		return nil, nil, nil, err
-	}
-
 	// Convert ApplicationNetworkPolicy to NetworkPolicy for ingress rules (reuse existing logic)
 	networkPolicy := r.convertApplicationNetworkPolicyToNetworkPolicyWithNoEgress(applicationNetworkPolicy)
 
@@ -81,10 +75,21 @@ func (r *applicationNetworkPolicyEndpointsResolver) convertApplicationNetworkPol
 	// Convert ANP egress rules to standard NetworkPolicy egress rules (CIDR only)
 	var egressRules []networking.NetworkPolicyEgressRule
 	for _, rule := range applicationNetworkPolicy.Spec.Egress {
-		if len(rule.To) > 0 {
+		var networkPolicyPeers []networking.NetworkPolicyPeer
+		for _, peer := range rule.To {
+			// Only include peers that don't have domain names (CIDR/pod/namespace selectors only)
+			if len(peer.DomainNames) == 0 {
+				networkPolicyPeers = append(networkPolicyPeers, networking.NetworkPolicyPeer{
+					PodSelector:       peer.PodSelector,
+					NamespaceSelector: peer.NamespaceSelector,
+					IPBlock:           peer.IPBlock,
+				})
+			}
+		}
+		if len(networkPolicyPeers) > 0 {
 			egressRules = append(egressRules, networking.NetworkPolicyEgressRule{
 				Ports: rule.Ports,
-				To:    rule.To,
+				To:    networkPolicyPeers,
 			})
 		}
 	}
@@ -109,8 +114,13 @@ func (r *applicationNetworkPolicyEndpointsResolver) computeApplicationNetworkPol
 	// Check if we have CIDR-based egress rules
 	hasCIDREgress := false
 	for _, rule := range applicationNetworkPolicy.Spec.Egress {
-		if len(rule.To) > 0 {
-			hasCIDREgress = true
+		for _, peer := range rule.To {
+			if len(peer.DomainNames) == 0 {
+				hasCIDREgress = true
+				break
+			}
+		}
+		if hasCIDREgress {
 			break
 		}
 	}
@@ -127,9 +137,11 @@ func (r *applicationNetworkPolicyEndpointsResolver) computeApplicationNetworkPol
 
 	// Handle FQDN rules
 	for _, rule := range applicationNetworkPolicy.Spec.Egress {
-		if len(rule.DomainNames) > 0 {
-			fqdnEndpoints := r.resolveFQDNRules(rule.DomainNames, rule.Ports)
-			egressEndpoints = append(egressEndpoints, fqdnEndpoints...)
+		for _, peer := range rule.To {
+			if len(peer.DomainNames) > 0 {
+				fqdnEndpoints := r.resolveFQDNRules(peer.DomainNames, rule.Ports)
+				egressEndpoints = append(egressEndpoints, fqdnEndpoints...)
+			}
 		}
 	}
 
@@ -169,25 +181,4 @@ func (r *applicationNetworkPolicyEndpointsResolver) resolveFQDNRules(domainNames
 	}
 
 	return endpoints
-}
-
-// validateApplicationNetworkPolicy validates ANP rules at resolution time
-func validateApplicationNetworkPolicy(anp *policyinfo.ApplicationNetworkPolicy) error {
-	// Ingress rules use networking.NetworkPolicyIngressRule type which does not contain DomainName field
-	// No validation needed - structurally safe
-
-	// Validate egress rules - must have either CIDR or DomainNames, but not both
-	for i, egressRule := range anp.Spec.Egress {
-		hasCIDRTargets := len(egressRule.To) > 0
-		hasDomainNames := len(egressRule.DomainNames) > 0
-
-		if hasCIDRTargets && hasDomainNames {
-			return fmt.Errorf("egress rule %d has both 'to' and 'domainNames' - they are mutually exclusive", i)
-		}
-		if !hasCIDRTargets && !hasDomainNames {
-			return fmt.Errorf("egress rule %d must have either 'to' or 'domainNames'", i)
-		}
-	}
-
-	return nil
 }

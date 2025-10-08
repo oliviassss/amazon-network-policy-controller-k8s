@@ -16,124 +16,6 @@ import (
 	mock_client "github.com/aws/amazon-network-policy-controller-k8s/mocks/controller-runtime/client"
 )
 
-func Test_validateApplicationNetworkPolicy(t *testing.T) {
-	tests := []struct {
-		name    string
-		anp     *policyinfo.ApplicationNetworkPolicy
-		wantErr bool
-	}{
-		{
-			name: "valid ANP with FQDN egress",
-			anp: &policyinfo.ApplicationNetworkPolicy{
-				Spec: policyinfo.ApplicationNetworkPolicySpec{
-					Egress: []policyinfo.ApplicationNetworkPolicyEgressRule{
-						{
-							DomainNames: []policyinfo.DomainName{"example.com"},
-							Ports: []networking.NetworkPolicyPort{
-								{Port: &intstr.IntOrString{IntVal: 443}},
-							},
-						},
-					},
-				},
-			},
-			wantErr: false,
-		},
-		{
-			name: "valid ANP with CIDR egress",
-			anp: &policyinfo.ApplicationNetworkPolicy{
-				Spec: policyinfo.ApplicationNetworkPolicySpec{
-					Egress: []policyinfo.ApplicationNetworkPolicyEgressRule{
-						{
-							To: []networking.NetworkPolicyPeer{
-								{
-									IPBlock: &networking.IPBlock{CIDR: "10.0.0.0/8"},
-								},
-							},
-						},
-					},
-				},
-			},
-			wantErr: false,
-		},
-		{
-			name: "invalid ANP with both FQDN and CIDR",
-			anp: &policyinfo.ApplicationNetworkPolicy{
-				Spec: policyinfo.ApplicationNetworkPolicySpec{
-					Egress: []policyinfo.ApplicationNetworkPolicyEgressRule{
-						{
-							To: []networking.NetworkPolicyPeer{
-								{
-									IPBlock: &networking.IPBlock{CIDR: "10.0.0.0/8"},
-								},
-							},
-							DomainNames: []policyinfo.DomainName{"example.com"},
-						},
-					},
-				},
-			},
-			wantErr: true,
-		},
-		{
-			name: "valid ANP with multiple DomainNames",
-			anp: &policyinfo.ApplicationNetworkPolicy{
-				Spec: policyinfo.ApplicationNetworkPolicySpec{
-					Egress: []policyinfo.ApplicationNetworkPolicyEgressRule{
-						{
-							DomainNames: []policyinfo.DomainName{"example.com", "test.com", "*.amazonaws.com"},
-							Ports: []networking.NetworkPolicyPort{
-								{Port: &intstr.IntOrString{IntVal: 443}},
-							},
-						},
-					},
-				},
-			},
-			wantErr: false,
-		},
-		{
-			name: "valid ANP with multiple CIDR blocks",
-			anp: &policyinfo.ApplicationNetworkPolicy{
-				Spec: policyinfo.ApplicationNetworkPolicySpec{
-					Egress: []policyinfo.ApplicationNetworkPolicyEgressRule{
-						{
-							To: []networking.NetworkPolicyPeer{
-								{IPBlock: &networking.IPBlock{CIDR: "10.0.0.0/8"}},
-								{IPBlock: &networking.IPBlock{CIDR: "192.168.0.0/16"}},
-							},
-						},
-					},
-				},
-			},
-			wantErr: false,
-		},
-		{
-			name: "invalid ANP with neither FQDN nor CIDR",
-			anp: &policyinfo.ApplicationNetworkPolicy{
-				Spec: policyinfo.ApplicationNetworkPolicySpec{
-					Egress: []policyinfo.ApplicationNetworkPolicyEgressRule{
-						{
-							Ports: []networking.NetworkPolicyPort{
-								{Port: &intstr.IntOrString{IntVal: 443}},
-							},
-						},
-					},
-				},
-			},
-			wantErr: true,
-		},
-	}
-
-	for _, tt := range tests {
-		t.Run(tt.name, func(t *testing.T) {
-			err := validateApplicationNetworkPolicy(tt.anp)
-			if tt.wantErr {
-				assert.Error(t, err)
-			} else {
-				assert.NoError(t, err)
-			}
-		})
-	}
-}
-
 func Test_resolveFQDNRules(t *testing.T) {
 	resolver := &applicationNetworkPolicyEndpointsResolver{
 		logger: zap.New(),
@@ -183,14 +65,18 @@ func Test_convertApplicationNetworkPolicyToNetworkPolicy(t *testing.T) {
 			PolicyTypes: []networking.PolicyType{networking.PolicyTypeEgress},
 			Egress: []policyinfo.ApplicationNetworkPolicyEgressRule{
 				{
-					To: []networking.NetworkPolicyPeer{
+					To: []policyinfo.ApplicationNetworkPolicyPeer{
 						{
 							IPBlock: &networking.IPBlock{CIDR: "10.0.0.0/8"},
 						},
 					},
 				},
 				{
-					DomainNames: []policyinfo.DomainName{"example.com"},
+					To: []policyinfo.ApplicationNetworkPolicyPeer{
+						{
+							DomainNames: []policyinfo.DomainName{"example.com"},
+						},
+					},
 				},
 			},
 		},
@@ -234,8 +120,12 @@ func Test_applicationNetworkPolicyEndpointsResolver_ResolveApplicationNetworkPol
 					PolicyTypes: []networking.PolicyType{networking.PolicyTypeEgress},
 					Egress: []policyinfo.ApplicationNetworkPolicyEgressRule{
 						{
-							DomainNames: []policyinfo.DomainName{"example.com"},
-							Ports:       []networking.NetworkPolicyPort{{Port: &intstr.IntOrString{IntVal: 443}}},
+							To: []policyinfo.ApplicationNetworkPolicyPeer{
+								{
+									DomainNames: []policyinfo.DomainName{"example.com"},
+								},
+							},
+							Ports: []networking.NetworkPolicyPort{{Port: &intstr.IntOrString{IntVal: 443}}},
 						},
 					},
 				},
@@ -259,8 +149,12 @@ func Test_applicationNetworkPolicyEndpointsResolver_ResolveApplicationNetworkPol
 					},
 					Egress: []policyinfo.ApplicationNetworkPolicyEgressRule{
 						{
-							DomainNames: []policyinfo.DomainName{"api.example.com", "db.example.com"},
-							Ports:       []networking.NetworkPolicyPort{{Port: &intstr.IntOrString{IntVal: 443}}},
+							To: []policyinfo.ApplicationNetworkPolicyPeer{
+								{
+									DomainNames: []policyinfo.DomainName{"api.example.com", "db.example.com"},
+								},
+							},
+							Ports: []networking.NetworkPolicyPort{{Port: &intstr.IntOrString{IntVal: 443}}},
 						},
 					},
 				},
@@ -285,7 +179,7 @@ func Test_applicationNetworkPolicyEndpointsResolver_ResolveApplicationNetworkPol
 					},
 					Egress: []policyinfo.ApplicationNetworkPolicyEgressRule{
 						{
-							To: []networking.NetworkPolicyPeer{
+							To: []policyinfo.ApplicationNetworkPolicyPeer{
 								{IPBlock: &networking.IPBlock{CIDR: "172.16.0.0/12"}},
 							},
 						},

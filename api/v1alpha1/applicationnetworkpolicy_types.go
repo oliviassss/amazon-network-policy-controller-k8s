@@ -70,6 +70,51 @@ type ApplicationNetworkPolicySpec struct {
 // +kubebuilder:validation:Pattern=`^(\*\.)?([a-zA-z0-9]([-a-zA-Z0-9_]*[a-zA-Z0-9])?\.)+[a-zA-z0-9]([-a-zA-Z0-9_]*[a-zA-Z0-9])?\.?$`
 type DomainName string
 
+// ApplicationNetworkPolicyPeer describes a peer to allow traffic to/from.
+// Only certain combinations of fields are allowed
+// +kubebuilder:validation:XValidation:rule="!(has(self.ipBlock) && has(self.domainNames))",message="ipBlock and domainNames are mutually exclusive"
+// +kubebuilder:validation:XValidation:rule="!(has(self.podSelector) && has(self.domainNames))",message="podSelector and domainNames are mutually exclusive"
+// +kubebuilder:validation:XValidation:rule="!(has(self.namespaceSelector) && has(self.domainNames))",message="namespaceSelector and domainNames are mutually exclusive"
+type ApplicationNetworkPolicyPeer struct {
+	// PodSelector is a label selector which selects pods. This field follows standard label
+	// selector semantics; if present but empty, it selects all pods.
+	//
+	// If namespaceSelector is also set, then the NetworkPolicyPeer as a whole selects
+	// the pods matching podSelector in the Namespaces selected by NamespaceSelector.
+	// Otherwise it selects the pods matching podSelector in the policy's own namespace.
+	// +optional
+	PodSelector *metav1.LabelSelector `json:"podSelector,omitempty"`
+
+	// NamespaceSelector selects namespaces using cluster-scoped labels. This field follows
+	// standard label selector semantics; if present but empty, it selects all namespaces.
+	//
+	// If podSelector is also set, then the NetworkPolicyPeer as a whole selects
+	// the pods matching podSelector in the namespaces selected by namespaceSelector.
+	// Otherwise it selects all pods in the namespaces selected by namespaceSelector.
+	// +optional
+	NamespaceSelector *metav1.LabelSelector `json:"namespaceSelector,omitempty"`
+
+	// IPBlock defines policy on a particular IPBlock. If this field is set then
+	// neither of the other fields can be.
+	// +optional
+	IPBlock *networking.IPBlock `json:"ipBlock,omitempty"`
+
+	// DomainNames provides a way to specify domain names as peers.
+	//
+	// DomainNames is only supported for Allow rules. In order to control
+	// access, DomainNames Allow rules should be used with a lower priority
+	// egress deny -- this allows the admin to maintain an explicit "allowlist"
+	// of reachable domains.
+	//
+	// This field is mutually exclusive with PodSelector, NamespaceSelector, and IPBlock.
+	// FQDN rules are ALLOW-only and do not support DENY semantics.
+	//
+	// +optional
+	// +listType=set
+	// +kubebuilder:validation:MinItems=1
+	DomainNames []DomainName `json:"domainNames,omitempty"`
+}
+
 // ApplicationNetworkPolicyEgressRule describes a particular set of traffic that is allowed out of pods
 // matched by an ApplicationNetworkPolicySpec's podSelector. The traffic must match both ports and to.
 type ApplicationNetworkPolicyEgressRule struct {
@@ -86,24 +131,8 @@ type ApplicationNetworkPolicyEgressRule struct {
 	// empty or missing, this rule matches all destinations (traffic not restricted by
 	// destination). If this field is present and contains at least one item, this rule
 	// allows traffic only if the traffic matches at least one item in the to list.
-	// This field is mutually exclusive with DomainNames.
 	// +optional
-	To []networking.NetworkPolicyPeer `json:"to,omitempty"`
-
-	// DomainNames provides a way to specify domain names as peers.
-	//
-	// DomainNames is only supported for Allow rules. In order to control
-	// access, DomainNames Allow rules should be used with a lower priority
-	// egress deny -- this allows the admin to maintain an explicit "allowlist"
-	// of reachable domains.
-	//
-	// This field is mutually exclusive with To field.
-	// FQDN rules are ALLOW-only and do not support DENY semantics.
-	//
-	// +optional
-	// +listType=set
-	// +kubebuilder:validation:MinItems=1
-	DomainNames []DomainName `json:"domainNames,omitempty"`
+	To []ApplicationNetworkPolicyPeer `json:"to,omitempty"`
 }
 
 // ApplicationNetworkPolicyStatus defines the observed state of ApplicationNetworkPolicy

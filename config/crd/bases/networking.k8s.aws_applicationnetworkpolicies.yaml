@@ -54,38 +54,6 @@ spec:
                     ApplicationNetworkPolicyEgressRule describes a particular set of traffic that is allowed out of pods
                     matched by an ApplicationNetworkPolicySpec's podSelector. The traffic must match both ports and to.
                   properties:
-                    domainNames:
-                      description: |-
-                        DomainNames provides a way to specify domain names as peers.
-
-                        DomainNames is only supported for Allow rules. In order to control
-                        access, DomainNames Allow rules should be used with a lower priority
-                        egress deny -- this allows the admin to maintain an explicit "allowlist"
-                        of reachable domains.
-
-                        This field is mutually exclusive with To field.
-                        FQDN rules are ALLOW-only and do not support DENY semantics.
-                      items:
-                        description: "DomainName describes one or more domain names
-                          to be used as a peer.\n\nDomainName can be an exact match,
-                          or use the wildcard specifier '*' to match\none or more
-                          labels.\n\n'*', the wildcard specifier, matches one or more
-                          entire labels. It does not\nsupport partial matches. '*'
-                          may only be specified as a prefix.\n\n\tExamples:\n\t  -
-                          `kubernetes.io` matches only `kubernetes.io`.\n\t    It
-                          does not match \"www.kubernetes.io\", \"blog.kubernetes.io\",\n\t
-                          \   \"my-kubernetes.io\", or \"wikipedia.org\".\n\t  - `blog.kubernetes.io`
-                          matches only \"blog.kubernetes.io\".\n\t    It does not
-                          match \"www.kubernetes.io\" or \"kubernetes.io\".\n\t  -
-                          `*.kubernetes.io` matches subdomains of kubernetes.io.\n\t
-                          \   \"www.kubernetes.io\", \"blog.kubernetes.io\", and\n\t
-                          \   \"latest.blog.kubernetes.io\" match, however \"kubernetes.io\",
-                          and\n\t    \"wikipedia.org\" do not."
-                        pattern: ^(\*\.)?([a-zA-z0-9]([-a-zA-Z0-9_]*[a-zA-Z0-9])?\.)+[a-zA-z0-9]([-a-zA-Z0-9_]*[a-zA-Z0-9])?\.?$
-                        type: string
-                      minItems: 1
-                      type: array
-                      x-kubernetes-list-type: set
                     ports:
                       description: |-
                         Ports is a list of destination ports for outgoing traffic.
@@ -129,15 +97,47 @@ spec:
                         empty or missing, this rule matches all destinations (traffic not restricted by
                         destination). If this field is present and contains at least one item, this rule
                         allows traffic only if the traffic matches at least one item in the to list.
-                        This field is mutually exclusive with DomainNames.
                       items:
                         description: |-
-                          NetworkPolicyPeer describes a peer to allow traffic to/from. Only certain combinations of
-                          fields are allowed
+                          ApplicationNetworkPolicyPeer describes a peer to allow traffic to/from.
+                          Only certain combinations of fields are allowed
                         properties:
+                          domainNames:
+                            description: |-
+                              DomainNames provides a way to specify domain names as peers.
+
+                              DomainNames is only supported for Allow rules. In order to control
+                              access, DomainNames Allow rules should be used with a lower priority
+                              egress deny -- this allows the admin to maintain an explicit "allowlist"
+                              of reachable domains.
+
+                              This field is mutually exclusive with PodSelector, NamespaceSelector, and IPBlock.
+                              FQDN rules are ALLOW-only and do not support DENY semantics.
+                            items:
+                              description: "DomainName describes one or more domain
+                                names to be used as a peer.\n\nDomainName can be an
+                                exact match, or use the wildcard specifier '*' to
+                                match\none or more labels.\n\n'*', the wildcard specifier,
+                                matches one or more entire labels. It does not\nsupport
+                                partial matches. '*' may only be specified as a prefix.\n\n\tExamples:\n\t
+                                \ - `kubernetes.io` matches only `kubernetes.io`.\n\t
+                                \   It does not match \"www.kubernetes.io\", \"blog.kubernetes.io\",\n\t
+                                \   \"my-kubernetes.io\", or \"wikipedia.org\".\n\t
+                                \ - `blog.kubernetes.io` matches only \"blog.kubernetes.io\".\n\t
+                                \   It does not match \"www.kubernetes.io\" or \"kubernetes.io\".\n\t
+                                \ - `*.kubernetes.io` matches subdomains of kubernetes.io.\n\t
+                                \   \"www.kubernetes.io\", \"blog.kubernetes.io\",
+                                and\n\t    \"latest.blog.kubernetes.io\" match, however
+                                \"kubernetes.io\", and\n\t    \"wikipedia.org\" do
+                                not."
+                              pattern: ^(\*\.)?([a-zA-z0-9]([-a-zA-Z0-9_]*[a-zA-Z0-9])?\.)+[a-zA-z0-9]([-a-zA-Z0-9_]*[a-zA-Z0-9])?\.?$
+                              type: string
+                            minItems: 1
+                            type: array
+                            x-kubernetes-list-type: set
                           ipBlock:
                             description: |-
-                              ipBlock defines policy on a particular IPBlock. If this field is set then
+                              IPBlock defines policy on a particular IPBlock. If this field is set then
                               neither of the other fields can be.
                             properties:
                               cidr:
@@ -159,7 +159,7 @@ spec:
                             type: object
                           namespaceSelector:
                             description: |-
-                              namespaceSelector selects namespaces using cluster-scoped labels. This field follows
+                              NamespaceSelector selects namespaces using cluster-scoped labels. This field follows
                               standard label selector semantics; if present but empty, it selects all namespaces.
 
                               If podSelector is also set, then the NetworkPolicyPeer as a whole selects
@@ -211,7 +211,7 @@ spec:
                             x-kubernetes-map-type: atomic
                           podSelector:
                             description: |-
-                              podSelector is a label selector which selects pods. This field follows standard label
+                              PodSelector is a label selector which selects pods. This field follows standard label
                               selector semantics; if present but empty, it selects all pods.
 
                               If namespaceSelector is also set, then the NetworkPolicyPeer as a whole selects
@@ -262,6 +262,14 @@ spec:
                             type: object
                             x-kubernetes-map-type: atomic
                         type: object
+                        x-kubernetes-validations:
+                        - message: ipBlock and domainNames are mutually exclusive
+                          rule: '!(has(self.ipBlock) && has(self.domainNames))'
+                        - message: podSelector and domainNames are mutually exclusive
+                          rule: '!(has(self.podSelector) && has(self.domainNames))'
+                        - message: namespaceSelector and domainNames are mutually
+                            exclusive
+                          rule: '!(has(self.namespaceSelector) && has(self.domainNames))'
                       type: array
                   type: object
                 type: array

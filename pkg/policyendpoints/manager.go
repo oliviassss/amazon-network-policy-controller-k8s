@@ -39,16 +39,20 @@ type PolicyEndpointsManager interface {
 	Cleanup(ctx context.Context, policy *networking.NetworkPolicy) error
 	ReconcileANP(ctx context.Context, anp *policyinfo.ApplicationNetworkPolicy) error
 	CleanupANP(ctx context.Context, anp *policyinfo.ApplicationNetworkPolicy) error
+	ReconcileCNP(ctx context.Context, cnp *policyinfo.ClusterNetworkPolicy) error
+	CleanupCNP(ctx context.Context, cnp *policyinfo.ClusterNetworkPolicy) error
 }
 
 // NewPolicyEndpointsManager constructs a new policyEndpointsManager
 func NewPolicyEndpointsManager(k8sClient client.Client, endpointChunkSize int, logger logr.Logger) *policyEndpointsManager {
 	endpointsResolver := resolvers.NewEndpointsResolver(k8sClient, logger.WithName("endpoints-resolver"))
 	anpEndpointsResolver := resolvers.NewApplicationNetworkPolicyEndpointsResolver(k8sClient, logger.WithName("anp-endpoints-resolver"))
+	cnpEndpointsResolver := resolvers.NewClusterNetworkPolicyEndpointsResolver(k8sClient, logger.WithName("cnp-endpoints-resolver"))
 	return &policyEndpointsManager{
 		k8sClient:            k8sClient,
 		endpointsResolver:    endpointsResolver,
 		anpEndpointsResolver: anpEndpointsResolver,
+		cnpEndpointsResolver: cnpEndpointsResolver,
 		endpointChunkSize:    endpointChunkSize,
 		logger:               logger,
 	}
@@ -60,6 +64,7 @@ type policyEndpointsManager struct {
 	k8sClient            client.Client
 	endpointsResolver    resolvers.EndpointsResolver
 	anpEndpointsResolver resolvers.ApplicationNetworkPolicyEndpointsResolver
+	cnpEndpointsResolver resolvers.ClusterNetworkPolicyEndpointsResolver
 	endpointChunkSize    int
 	logger               logr.Logger
 }
@@ -668,4 +673,107 @@ func (m *policyEndpointsManager) computeApplicationNetworkPolicyEndpoints(anp *p
 	}
 
 	return m.processANPPolicyEndpoints(createPolicyEndpoints), m.processANPPolicyEndpoints(updatePolicyEndpoints), deletePolicyEndpoints, nil
+}
+
+func (m *policyEndpointsManager) ReconcileCNP(ctx context.Context, cnp *policyinfo.ClusterNetworkPolicy) error {
+	ingressRules, egressRules, podSelectorEndpoints, err := m.cnpEndpointsResolver.ResolveClusterNetworkPolicy(ctx, cnp)
+	if err != nil {
+		return err
+	}
+
+	// List existing ClusterPolicyEndpoints for this CNP
+	clusterPolicyEndpointList := &policyinfo.ClusterPolicyEndpointList{}
+	if err := m.k8sClient.List(ctx, clusterPolicyEndpointList,
+		client.MatchingFields{IndexKeyClusterPolicyReferenceName: cnp.Name}); err != nil {
+		return err
+	}
+
+	existingClusterPolicyEndpoints := clusterPolicyEndpointList.Items
+
+	createList, updateList, deleteList, err := m.computeClusterPolicyEndpoints(cnp, existingClusterPolicyEndpoints, ingressRules, egressRules, podSelectorEndpoints)
+	if err != nil {
+		return err
+	}
+
+	m.logger.Info("Got cluster policy endpoints lists", "create", len(createList), "update", len(updateList), "delete", len(deleteList))
+
+	// Create, update, delete ClusterPolicyEndpoints
+	for _, cpe := range createList {
+		if err := m.k8sClient.Create(ctx, &cpe); err != nil {
+			return err
+		}
+		m.logger.Info("Created cluster policy endpoint", "name", cpe.Name)
+	}
+
+	for _, cpe := range updateList {
+		if err := m.k8sClient.Update(ctx, &cpe); err != nil {
+			return err
+		}
+		m.logger.Info("Updated cluster policy endpoint", "name", cpe.Name)
+	}
+
+	for _, cpe := range deleteList {
+		if err := m.k8sClient.Delete(ctx, &cpe); err != nil {
+			return err
+		}
+		m.logger.Info("Deleted cluster policy endpoint", "name", cpe.Name)
+	}
+
+	return nil
+}
+
+func (m *policyEndpointsManager) CleanupCNP(ctx context.Context, cnp *policyinfo.ClusterNetworkPolicy) error {
+	clusterPolicyEndpointList := &policyinfo.ClusterPolicyEndpointList{}
+	if err := m.k8sClient.List(ctx, clusterPolicyEndpointList,
+		client.MatchingFields{IndexKeyClusterPolicyReferenceName: cnp.Name}); err != nil {
+		return err
+	}
+
+	for _, cpe := range clusterPolicyEndpointList.Items {
+		if err := m.k8sClient.Delete(ctx, &cpe); err != nil {
+			return err
+		}
+		m.logger.Info("Cleaned up cluster policy endpoint", "name", cpe.Name)
+	}
+	return nil
+}
+
+func (m *policyEndpointsManager) computeClusterPolicyEndpoints(cnp *policyinfo.ClusterNetworkPolicy, existingCPEs []policyinfo.ClusterPolicyEndpoint, ingressRules []policyinfo.ClusterEndpointInfo, egressRules []policyinfo.ClusterEndpointInfo, podSelectorEndpoints []policyinfo.PodEndpoint) ([]policyinfo.ClusterPolicyEndpoint, []policyinfo.ClusterPolicyEndpoint, []policyinfo.ClusterPolicyEndpoint, error) {
+	// Simple implementation: create one CPE per CNP
+	desiredCPE := policyinfo.ClusterPolicyEndpoint{
+		ObjectMeta: metav1.ObjectMeta{
+			Name: cnp.Name + "-cpe",
+			OwnerReferences: []metav1.OwnerReference{
+				{
+					APIVersion:         cnp.APIVersion,
+					Kind:               cnp.Kind,
+					Name:               cnp.Name,
+					UID:                cnp.UID,
+					BlockOwnerDeletion: &[]bool{true}[0],
+					Controller:         &[]bool{true}[0],
+				},
+			},
+		},
+		Spec: policyinfo.ClusterPolicyEndpointSpec{
+			PolicyRef: policyinfo.ClusterPolicyReference{
+				Name: cnp.Name,
+			},
+			Tier:                 cnp.Spec.Tier,
+			Priority:             cnp.Spec.Priority,
+			Subject:              cnp.Spec.Subject,
+			PodSelectorEndpoints: podSelectorEndpoints,
+			Ingress:              ingressRules,
+			Egress:               egressRules,
+		},
+	}
+
+	// Simple logic: if no existing CPE, create new one
+	if len(existingCPEs) == 0 {
+		return []policyinfo.ClusterPolicyEndpoint{desiredCPE}, nil, nil, nil
+	}
+
+	// If exists, update it
+	existingCPE := existingCPEs[0]
+	existingCPE.Spec = desiredCPE.Spec
+	return nil, []policyinfo.ClusterPolicyEndpoint{existingCPE}, nil, nil
 }

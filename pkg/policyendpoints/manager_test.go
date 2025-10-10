@@ -1,17 +1,22 @@
 package policyendpoints
 
 import (
+	"context"
 	"sort"
 	"testing"
 
+	"github.com/go-logr/logr"
+	"github.com/golang/mock/gomock"
 	"github.com/stretchr/testify/assert"
 	corev1 "k8s.io/api/core/v1"
 	networking "k8s.io/api/networking/v1"
 	"k8s.io/apimachinery/pkg/api/equality"
 	metav1 "k8s.io/apimachinery/pkg/apis/meta/v1"
+	"sigs.k8s.io/controller-runtime/pkg/client"
 	"sigs.k8s.io/controller-runtime/pkg/log/zap"
 
 	policyinfo "github.com/aws/amazon-network-policy-controller-k8s/api/v1alpha1"
+	mock_client "github.com/aws/amazon-network-policy-controller-k8s/mocks/controller-runtime/client"
 )
 
 func Test_policyEndpointsManager_computePolicyEndpoints(t *testing.T) {
@@ -1004,4 +1009,100 @@ func Test_getEndpointInfoKey(t *testing.T) {
 	fqdnKey := m.getEndpointInfoKey(policyinfo.EndpointInfo{DomainName: "example.com"})
 	cidrKey := m.getEndpointInfoKey(policyinfo.EndpointInfo{CIDR: "10.0.0.0/8"})
 	assert.NotEqual(t, fqdnKey, cidrKey)
+}
+
+func TestPolicyEndpointsManager_ReconcileCNP(t *testing.T) {
+	ctrl := gomock.NewController(t)
+	defer ctrl.Finish()
+
+	mockClient := mock_client.NewMockClient(ctrl)
+	mockCNPResolver := &mockCNPEndpointsResolver{}
+
+	manager := &policyEndpointsManager{
+		k8sClient:            mockClient,
+		cnpEndpointsResolver: mockCNPResolver,
+		logger:               logr.Discard(),
+	}
+
+	cnp := &policyinfo.ClusterNetworkPolicy{
+		ObjectMeta: metav1.ObjectMeta{
+			Name: "test-cnp",
+			UID:  "test-uid",
+		},
+		Spec: policyinfo.ClusterNetworkPolicySpec{
+			Tier:     policyinfo.AdminTier,
+			Priority: 100,
+		},
+	}
+
+	// Mock resolver response
+	mockCNPResolver.ingressRules = []policyinfo.ClusterEndpointInfo{
+		{CIDR: "10.0.0.0/8"},
+	}
+	mockCNPResolver.egressRules = []policyinfo.ClusterEndpointInfo{
+		{DomainName: "example.com"},
+	}
+	mockCNPResolver.podEndpoints = []policyinfo.PodEndpoint{
+		{Name: "pod1", Namespace: "default", PodIP: "10.0.1.1", HostIP: "10.1.1.1"},
+	}
+
+	// Mock client calls
+	mockClient.EXPECT().List(gomock.Any(), gomock.Any(), gomock.Any()).Return(nil)
+	mockClient.EXPECT().Create(gomock.Any(), gomock.Any()).Return(nil)
+
+	err := manager.ReconcileCNP(context.Background(), cnp)
+	assert.NoError(t, err)
+	assert.True(t, mockCNPResolver.called)
+}
+
+func TestPolicyEndpointsManager_CleanupCNP(t *testing.T) {
+	ctrl := gomock.NewController(t)
+	defer ctrl.Finish()
+
+	mockClient := mock_client.NewMockClient(ctrl)
+
+	manager := &policyEndpointsManager{
+		k8sClient: mockClient,
+		logger:    logr.Discard(),
+	}
+
+	cnp := &policyinfo.ClusterNetworkPolicy{
+		ObjectMeta: metav1.ObjectMeta{
+			Name: "test-cnp",
+			UID:  "test-uid",
+		},
+	}
+
+	// Mock existing CPE
+	cpeList := &policyinfo.ClusterPolicyEndpointList{
+		Items: []policyinfo.ClusterPolicyEndpoint{
+			{
+				ObjectMeta: metav1.ObjectMeta{Name: "cluster-test-cnp-abc123"},
+				Spec:       policyinfo.ClusterPolicyEndpointSpec{PolicyRef: policyinfo.ClusterPolicyReference{Name: "test-cnp"}},
+			},
+		},
+	}
+
+	mockClient.EXPECT().List(gomock.Any(), gomock.Any(), gomock.Any()).DoAndReturn(
+		func(ctx context.Context, list client.ObjectList, opts ...client.ListOption) error {
+			list.(*policyinfo.ClusterPolicyEndpointList).Items = cpeList.Items
+			return nil
+		})
+	mockClient.EXPECT().Delete(gomock.Any(), gomock.Any()).Return(nil)
+
+	err := manager.CleanupCNP(context.Background(), cnp)
+	assert.NoError(t, err)
+}
+
+// Mock CNP resolver for testing
+type mockCNPEndpointsResolver struct {
+	called       bool
+	ingressRules []policyinfo.ClusterEndpointInfo
+	egressRules  []policyinfo.ClusterEndpointInfo
+	podEndpoints []policyinfo.PodEndpoint
+}
+
+func (m *mockCNPEndpointsResolver) ResolveClusterNetworkPolicy(ctx context.Context, cnp *policyinfo.ClusterNetworkPolicy) ([]policyinfo.ClusterEndpointInfo, []policyinfo.ClusterEndpointInfo, []policyinfo.PodEndpoint, error) {
+	m.called = true
+	return m.ingressRules, m.egressRules, m.podEndpoints, nil
 }

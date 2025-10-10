@@ -133,15 +133,15 @@ func TestApplicationNetworkPolicyEgressRule_MutualExclusivity(t *testing.T) {
 	validCombinationsRule := ApplicationNetworkPolicyEgressRule{
 		To: []ApplicationNetworkPolicyPeer{
 			{
-				IPBlock: &networking.IPBlock{CIDR: "10.0.0.0/8"},
+				IPBlock:     &networking.IPBlock{CIDR: "10.0.0.0/8"},
 				PodSelector: &metav1.LabelSelector{MatchLabels: map[string]string{"app": "db"}},
 			},
 			{
-				PodSelector: &metav1.LabelSelector{MatchLabels: map[string]string{"app": "web"}},
+				PodSelector:       &metav1.LabelSelector{MatchLabels: map[string]string{"app": "web"}},
 				NamespaceSelector: &metav1.LabelSelector{MatchLabels: map[string]string{"env": "prod"}},
 			},
 			{
-				IPBlock: &networking.IPBlock{CIDR: "192.168.0.0/16"},
+				IPBlock:           &networking.IPBlock{CIDR: "192.168.0.0/16"},
 				NamespaceSelector: &metav1.LabelSelector{MatchLabels: map[string]string{"tier": "backend"}},
 			},
 		},
@@ -155,7 +155,7 @@ func TestApplicationNetworkPolicyEgressRule_MutualExclusivity(t *testing.T) {
 	assert.NotNil(t, validCombinationsRule.To[2].NamespaceSelector)
 
 	// Invalid combinations (would fail CEL validation at API level):
-	
+
 	// IPBlock + DomainNames in same peer
 	invalidIPBlockRule := ApplicationNetworkPolicyEgressRule{
 		To: []ApplicationNetworkPolicyPeer{

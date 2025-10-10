@@ -90,6 +90,8 @@ func (h *enqueueRequestForPolicyEvent) Delete(_ context.Context, e event.DeleteE
 		h.policyTracker.RemovePolicy(obj)
 	case *policyinfo.ApplicationNetworkPolicy:
 		h.policyTracker.RemoveGenericPolicy(obj)
+	case *policyinfo.ClusterNetworkPolicy:
+		h.policyTracker.RemoveGenericPolicy(obj)
 	default:
 		h.logger.Info("Unknown policy type in delete event", "type", fmt.Sprintf("%T", e.Object))
 	}

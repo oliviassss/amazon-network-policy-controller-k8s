@@ -159,6 +159,8 @@ type mockPolicyEndpointsManager struct {
 	cleanupANPCalled   bool
 	reconcileCalled    bool
 	cleanupCalled      bool
+	reconcileCNPCalled bool
+	cleanupCNPCalled   bool
 }
 
 func (m *mockPolicyEndpointsManager) Reconcile(ctx context.Context, policy *networking.NetworkPolicy) error {
@@ -178,6 +180,16 @@ func (m *mockPolicyEndpointsManager) ReconcileANP(ctx context.Context, anp *poli
 
 func (m *mockPolicyEndpointsManager) CleanupANP(ctx context.Context, anp *policyinfo.ApplicationNetworkPolicy) error {
 	m.cleanupANPCalled = true
+	return nil
+}
+
+func (m *mockPolicyEndpointsManager) ReconcileCNP(ctx context.Context, cnp *policyinfo.ClusterNetworkPolicy) error {
+	m.reconcileCNPCalled = true
+	return nil
+}
+
+func (m *mockPolicyEndpointsManager) CleanupCNP(ctx context.Context, cnp *policyinfo.ClusterNetworkPolicy) error {
+	m.cleanupCNPCalled = true
 	return nil
 }
 
@@ -203,4 +215,61 @@ func (m *mockPolicyTracker) GetPoliciesWithNamespaceReferences() sets.Set[types.
 
 func (m *mockPolicyTracker) GetPoliciesWithEgressRules() sets.Set[types.NamespacedName] {
 	return sets.Set[types.NamespacedName]{}
+}
+
+func Test_policyReconciler_reconcileClusterNetworkPolicy(t *testing.T) {
+	ctrl := gomock.NewController(t)
+	defer ctrl.Finish()
+
+	mockClient := mock_client.NewMockClient(ctrl)
+	mockFinalizerManager := &mockFinalizerManager{}
+	mockPolicyEndpointsManager := &mockPolicyEndpointsManager{}
+
+	reconciler := &policyReconciler{
+		k8sClient:              mockClient,
+		finalizerManager:       mockFinalizerManager,
+		policyEndpointsManager: mockPolicyEndpointsManager,
+		logger:                 zap.New(),
+	}
+
+	cnp := &policyinfo.ClusterNetworkPolicy{
+		ObjectMeta: metav1.ObjectMeta{
+			Name: "test-cnp",
+		},
+	}
+
+	err := reconciler.reconcileClusterNetworkPolicy(context.Background(), cnp)
+
+	assert.NoError(t, err)
+	assert.True(t, mockFinalizerManager.addFinalizersCalled)
+	assert.True(t, mockPolicyEndpointsManager.reconcileCNPCalled)
+}
+
+func Test_policyReconciler_cleanupClusterNetworkPolicy(t *testing.T) {
+	ctrl := gomock.NewController(t)
+	defer ctrl.Finish()
+
+	mockClient := mock_client.NewMockClient(ctrl)
+	mockFinalizerManager := &mockFinalizerManager{}
+	mockPolicyEndpointsManager := &mockPolicyEndpointsManager{}
+
+	reconciler := &policyReconciler{
+		k8sClient:              mockClient,
+		finalizerManager:       mockFinalizerManager,
+		policyEndpointsManager: mockPolicyEndpointsManager,
+		logger:                 zap.New(),
+	}
+
+	cnp := &policyinfo.ClusterNetworkPolicy{
+		ObjectMeta: metav1.ObjectMeta{
+			Name:       "test-cnp",
+			Finalizers: []string{cnpFinalizerName},
+		},
+	}
+
+	err := reconciler.cleanupClusterNetworkPolicy(context.Background(), cnp)
+
+	assert.NoError(t, err)
+	assert.True(t, mockPolicyEndpointsManager.cleanupCNPCalled)
+	assert.True(t, mockFinalizerManager.removeFinalizersCalled)
 }

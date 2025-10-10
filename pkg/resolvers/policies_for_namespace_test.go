@@ -19,6 +19,7 @@ import (
 	"sigs.k8s.io/controller-runtime/pkg/client"
 	"sigs.k8s.io/controller-runtime/pkg/log"
 
+	policyinfo "github.com/aws/amazon-network-policy-controller-k8s/api/v1alpha1"
 	mock_client "github.com/aws/amazon-network-policy-controller-k8s/mocks/controller-runtime/client"
 )
 
@@ -568,4 +569,45 @@ func TestDefaultNamespaceUtils_isNamespaceReferredInPolicy(t *testing.T) {
 			assert.Equal(t, tt.want, got)
 		})
 	}
+}
+
+func TestPolicyReferenceResolver_GetReferredClusterPoliciesForNamespace(t *testing.T) {
+	ctrl := gomock.NewController(t)
+	defer ctrl.Finish()
+
+	mockClient := mock_client.NewMockClient(ctrl)
+
+	cnp := &policyinfo.ClusterNetworkPolicy{
+		ObjectMeta: metav1.ObjectMeta{Name: "test-cnp"},
+		Spec: policyinfo.ClusterNetworkPolicySpec{
+			Subject: policyinfo.ClusterNetworkPolicySubject{
+				Namespaces: &metav1.LabelSelector{},
+			},
+		},
+	}
+
+	cnpList := &policyinfo.ClusterNetworkPolicyList{
+		Items: []policyinfo.ClusterNetworkPolicy{*cnp},
+	}
+
+	mockClient.EXPECT().List(gomock.Any(), gomock.Any()).DoAndReturn(
+		func(ctx context.Context, list client.ObjectList, opts ...client.ListOption) error {
+			list.(*policyinfo.ClusterNetworkPolicyList).Items = cnpList.Items
+			return nil
+		})
+
+	resolver := &defaultPolicyReferenceResolver{
+		k8sClient: mockClient,
+		logger:    logr.New(&log.NullLogSink{}),
+	}
+
+	ns := &corev1.Namespace{
+		ObjectMeta: metav1.ObjectMeta{Name: "test-ns"},
+	}
+
+	policies, err := resolver.GetReferredClusterPoliciesForNamespace(context.Background(), ns, nil)
+
+	assert.NoError(t, err)
+	assert.Len(t, policies, 1)
+	assert.Equal(t, "test-cnp", policies[0].Name)
 }

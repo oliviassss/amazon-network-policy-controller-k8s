@@ -80,15 +80,44 @@ func (h *enqueueRequestForServiceEvent) Generic(_ context.Context, _ event.Gener
 }
 
 func (h *enqueueRequestForServiceEvent) enqueueReferredPolicies(ctx context.Context, _ workqueue.TypedRateLimitingInterface[reconcile.Request], svc *corev1.Service, svcOld *corev1.Service) {
+	// Handle Network Policy
 	referredPolicies, err := h.policyResolver.GetReferredPoliciesForService(ctx, svc, svcOld)
 	if err != nil {
 		h.logger.Error(err, "Unable to get referred policies", "service", k8s.NamespacedName(svc))
+		return
 	}
 	for i := range referredPolicies {
 		policy := &referredPolicies[i]
 		h.logger.V(1).Info("Enqueue policies from service reference", "policy", k8s.NamespacedName(policy), "svc", k8s.NamespacedName(svc))
 		h.policyEventChan <- event.GenericEvent{
 			Object: policy,
+		}
+	}
+
+	// Handle ApplicationNetworkPolicy
+	referredANPs, err := h.policyResolver.GetReferredApplicationNetworkPoliciesForService(ctx, svc, svcOld)
+	if err != nil {
+		h.logger.Error(err, "Unable to get referred ANPs", "service", k8s.NamespacedName(svc))
+	}
+	for i := range referredANPs {
+		anp := &referredANPs[i]
+		h.logger.V(1).Info("Enqueue ANPs from service reference", "anp", k8s.NamespacedName(anp), "svc", k8s.NamespacedName(svc))
+		h.policyEventChan <- event.GenericEvent{
+			Object: anp,
+		}
+	}
+
+	// Handle Cluster Network Policy
+	referredClusterPolicies, err := h.policyResolver.GetReferredClusterPoliciesForService(ctx, svc, svcOld)
+	if err != nil {
+		h.logger.Error(err, "Unable to get referred cluster policies", "service", k8s.NamespacedName(svc))
+		return
+	}
+	for i := range referredClusterPolicies {
+		cnp := &referredClusterPolicies[i]
+		h.logger.V(1).Info("Enqueue CNP from service reference", "cnp", cnp.Name, "svc", k8s.NamespacedName(svc))
+		h.policyEventChan <- event.GenericEvent{
+			Object: cnp,
 		}
 	}
 }

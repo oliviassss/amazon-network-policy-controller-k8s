@@ -17,6 +17,7 @@ import (
 	"sigs.k8s.io/controller-runtime/pkg/client"
 	"sigs.k8s.io/controller-runtime/pkg/log"
 
+	policyinfo "github.com/aws/amazon-network-policy-controller-k8s/api/v1alpha1"
 	mock_client "github.com/aws/amazon-network-policy-controller-k8s/mocks/controller-runtime/client"
 )
 
@@ -1223,4 +1224,66 @@ func TestPolicyReferenceResolver_isPodLabelMatchPeer(t *testing.T) {
 			assert.Equal(t, tt.want, got)
 		})
 	}
+}
+
+func TestPolicyReferenceResolver_GetReferredClusterPoliciesForPod(t *testing.T) {
+	ctrl := gomock.NewController(t)
+	defer ctrl.Finish()
+
+	mockClient := mock_client.NewMockClient(ctrl)
+	nullLogger := logr.New(logr.Discard().GetSink())
+
+	cnp1 := &policyinfo.ClusterNetworkPolicy{
+		ObjectMeta: metav1.ObjectMeta{Name: "cnp1"},
+		Spec: policyinfo.ClusterNetworkPolicySpec{
+			Subject: policyinfo.ClusterNetworkPolicySubject{
+				Namespaces: &metav1.LabelSelector{},
+			},
+		},
+	}
+	cnp2 := &policyinfo.ClusterNetworkPolicy{
+		ObjectMeta: metav1.ObjectMeta{Name: "cnp2"},
+		Spec: policyinfo.ClusterNetworkPolicySpec{
+			Subject: policyinfo.ClusterNetworkPolicySubject{
+				Pods: &policyinfo.NamespacedPod{
+					NamespaceSelector: metav1.LabelSelector{},
+					PodSelector:       metav1.LabelSelector{},
+				},
+			},
+		},
+	}
+
+	cnpList := &policyinfo.ClusterNetworkPolicyList{
+		Items: []policyinfo.ClusterNetworkPolicy{*cnp1, *cnp2},
+	}
+
+	mockClient.EXPECT().List(gomock.Any(), gomock.Any()).DoAndReturn(
+		func(ctx context.Context, list client.ObjectList, opts ...client.ListOption) error {
+			list.(*policyinfo.ClusterNetworkPolicyList).Items = cnpList.Items
+			return nil
+		})
+
+	resolver := &defaultPolicyReferenceResolver{
+		k8sClient: mockClient,
+		logger:    nullLogger,
+	}
+
+	pod := &corev1.Pod{
+		ObjectMeta: metav1.ObjectMeta{
+			Name:      "test-pod",
+			Namespace: "default",
+		},
+	}
+
+	policies, err := resolver.GetReferredClusterPoliciesForPod(context.Background(), pod, nil)
+
+	assert.NoError(t, err)
+	assert.Len(t, policies, 2)
+
+	policyNames := make([]string, len(policies))
+	for i, p := range policies {
+		policyNames[i] = p.Name
+	}
+	assert.Contains(t, policyNames, "cnp1")
+	assert.Contains(t, policyNames, "cnp2")
 }

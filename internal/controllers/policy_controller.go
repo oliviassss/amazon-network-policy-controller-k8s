@@ -27,6 +27,7 @@ import (
 	"github.com/go-logr/logr"
 	corev1 "k8s.io/api/core/v1"
 	networking "k8s.io/api/networking/v1"
+	"k8s.io/apimachinery/pkg/types"
 	ctrl "sigs.k8s.io/controller-runtime"
 	"sigs.k8s.io/controller-runtime/pkg/client"
 	"sigs.k8s.io/controller-runtime/pkg/controller"
@@ -46,6 +47,7 @@ const (
 	controllerName      = "policy"
 	policyFinalizerName = "networking.k8s.aws/resources"
 	anpFinalizerName    = "networking.k8s.aws/anp-resources"
+	cnpFinalizerName    = "networking.k8s.aws/cnp-resources"
 )
 
 func NewPolicyReconciler(k8sClient client.Client, policyEndpointsManager policyendpoints.PolicyEndpointsManager,
@@ -84,6 +86,12 @@ type policyReconciler struct {
 //+kubebuilder:rbac:groups=networking.k8s.aws,resources=applicationnetworkpolicies,verbs=get;list;watch;update;patch
 //+kubebuilder:rbac:groups=networking.k8s.aws,resources=applicationnetworkpolicies/status,verbs=get;update;patch
 //+kubebuilder:rbac:groups=networking.k8s.aws,resources=applicationnetworkpolicies/finalizers,verbs=update
+//+kubebuilder:rbac:groups=networking.k8s.aws,resources=clusternetworkpolicies,verbs=get;list;watch;update;patch
+//+kubebuilder:rbac:groups=networking.k8s.aws,resources=clusternetworkpolicies/status,verbs=get;update;patch
+//+kubebuilder:rbac:groups=networking.k8s.aws,resources=clusternetworkpolicies/finalizers,verbs=update
+//+kubebuilder:rbac:groups=networking.k8s.aws,resources=clusterpolicyendpoints,verbs=get;list;watch;create;update;patch;delete
+//+kubebuilder:rbac:groups=networking.k8s.aws,resources=clusterpolicyendpoints/status,verbs=get;update;patch
+//+kubebuilder:rbac:groups=networking.k8s.aws,resources=clusterpolicyendpoints/finalizers,verbs=update
 //+kubebuilder:rbac:groups="",resources=pods,verbs=get;list;watch
 //+kubebuilder:rbac:groups="",resources=namespaces,verbs=get;list;watch
 //+kubebuilder:rbac:groups="",resources=services,verbs=get;list;watch
@@ -117,6 +125,7 @@ func (r *policyReconciler) SetupWithManager(ctx context.Context, mgr ctrl.Manage
 		Named(controllerName).
 		Watches(&networking.NetworkPolicy{}, policyEventHandler).
 		Watches(&policyinfo.ApplicationNetworkPolicy{}, policyEventHandler).
+		Watches(&policyinfo.ClusterNetworkPolicy{}, policyEventHandler).
 		Watches(&corev1.Pod{}, podEventHandler).
 		Watches(&corev1.Namespace{}, nsEventHandler).
 		Watches(&corev1.Service{}, svcEventHandler).
@@ -129,38 +138,58 @@ func (r *policyReconciler) SetupWithManager(ctx context.Context, mgr ctrl.Manage
 func (r *policyReconciler) reconcile(ctx context.Context, request reconcile.Request) error {
 	var errors []error
 
-	// Try NetworkPolicy
-	networkPolicy := &networking.NetworkPolicy{}
-	if err := r.k8sClient.Get(ctx, request.NamespacedName, networkPolicy); err == nil {
-		if !networkPolicy.DeletionTimestamp.IsZero() {
-			if err := r.cleanupNetworkPolicy(ctx, networkPolicy); err != nil {
-				errors = append(errors, err)
+	// Handle namespace-scoped resources (NetworkPolicy, ANP)
+	if request.Namespace != "" {
+		// Try NetworkPolicy
+		networkPolicy := &networking.NetworkPolicy{}
+		if err := r.k8sClient.Get(ctx, request.NamespacedName, networkPolicy); err == nil {
+			if !networkPolicy.DeletionTimestamp.IsZero() {
+				if err := r.cleanupNetworkPolicy(ctx, networkPolicy); err != nil {
+					errors = append(errors, err)
+				}
+			} else {
+				if err := r.reconcileNetworkPolicy(ctx, networkPolicy); err != nil {
+					errors = append(errors, err)
+				}
 			}
-		} else {
-			if err := r.reconcileNetworkPolicy(ctx, networkPolicy); err != nil {
-				errors = append(errors, err)
-			}
+		} else if client.IgnoreNotFound(err) != nil {
+			r.logger.Info("Unable to get NetworkPolicy", "resource", request.NamespacedName, "err", err)
+			errors = append(errors, err)
 		}
-	} else if client.IgnoreNotFound(err) != nil {
-		r.logger.Info("Unable to get NetworkPolicy", "resource", request.NamespacedName, "err", err)
-		errors = append(errors, err)
-	}
 
-	// Try ApplicationNetworkPolicy
-	applicationNetworkPolicy := &policyinfo.ApplicationNetworkPolicy{}
-	if err := r.k8sClient.Get(ctx, request.NamespacedName, applicationNetworkPolicy); err == nil {
-		if !applicationNetworkPolicy.DeletionTimestamp.IsZero() {
-			if err := r.cleanupApplicationNetworkPolicy(ctx, applicationNetworkPolicy); err != nil {
-				errors = append(errors, err)
+		// Try ApplicationNetworkPolicy
+		applicationNetworkPolicy := &policyinfo.ApplicationNetworkPolicy{}
+		if err := r.k8sClient.Get(ctx, request.NamespacedName, applicationNetworkPolicy); err == nil {
+			if !applicationNetworkPolicy.DeletionTimestamp.IsZero() {
+				if err := r.cleanupApplicationNetworkPolicy(ctx, applicationNetworkPolicy); err != nil {
+					errors = append(errors, err)
+				}
+			} else {
+				if err := r.reconcileApplicationNetworkPolicy(ctx, applicationNetworkPolicy); err != nil {
+					errors = append(errors, err)
+				}
 			}
-		} else {
-			if err := r.reconcileApplicationNetworkPolicy(ctx, applicationNetworkPolicy); err != nil {
-				errors = append(errors, err)
-			}
+		} else if client.IgnoreNotFound(err) != nil {
+			r.logger.Info("Unable to get ApplicationNetworkPolicy", "resource", request.NamespacedName, "err", err)
+			errors = append(errors, err)
 		}
-	} else if client.IgnoreNotFound(err) != nil {
-		r.logger.Info("Unable to get ApplicationNetworkPolicy", "resource", request.NamespacedName, "err", err)
-		errors = append(errors, err)
+	} else {
+		// Handle cluster-scoped resources (CNP)
+		clusterNetworkPolicy := &policyinfo.ClusterNetworkPolicy{}
+		if err := r.k8sClient.Get(ctx, types.NamespacedName{Name: request.Name}, clusterNetworkPolicy); err == nil {
+			if !clusterNetworkPolicy.DeletionTimestamp.IsZero() {
+				if err := r.cleanupClusterNetworkPolicy(ctx, clusterNetworkPolicy); err != nil {
+					errors = append(errors, err)
+				}
+			} else {
+				if err := r.reconcileClusterNetworkPolicy(ctx, clusterNetworkPolicy); err != nil {
+					errors = append(errors, err)
+				}
+			}
+		} else if client.IgnoreNotFound(err) != nil {
+			r.logger.Info("Unable to get ClusterNetworkPolicy", "resource", request.Name, "err", err)
+			errors = append(errors, err)
+		}
 	}
 
 	// Return constructed error if any occurred
@@ -213,9 +242,32 @@ func (r *policyReconciler) cleanupApplicationNetworkPolicy(ctx context.Context, 
 	return nil
 }
 
+func (r *policyReconciler) reconcileClusterNetworkPolicy(ctx context.Context, cnp *policyinfo.ClusterNetworkPolicy) error {
+	if err := r.finalizerManager.AddFinalizers(ctx, cnp, cnpFinalizerName); err != nil {
+		return err
+	}
+	return r.policyEndpointsManager.ReconcileCNP(ctx, cnp)
+}
+
+func (r *policyReconciler) cleanupClusterNetworkPolicy(ctx context.Context, cnp *policyinfo.ClusterNetworkPolicy) error {
+	if k8s.HasFinalizer(cnp, cnpFinalizerName) {
+		if err := r.policyEndpointsManager.CleanupCNP(ctx, cnp); err != nil {
+			return err
+		}
+		if err := r.finalizerManager.RemoveFinalizers(ctx, cnp, cnpFinalizerName); err != nil {
+			return err
+		}
+	}
+	return nil
+}
+
 func (r *policyReconciler) setupIndexes(ctx context.Context, fieldIndexer client.FieldIndexer) error {
 	if err := fieldIndexer.IndexField(ctx, &policyinfo.PolicyEndpoint{}, policyendpoints.IndexKeyPolicyReferenceName,
 		policyendpoints.IndexFunctionPolicyReferenceName); err != nil {
+		return err
+	}
+	if err := fieldIndexer.IndexField(ctx, &policyinfo.ClusterPolicyEndpoint{}, policyendpoints.IndexKeyClusterPolicyReferenceName,
+		policyendpoints.IndexFunctionClusterPolicyReferenceName); err != nil {
 		return err
 	}
 	return nil

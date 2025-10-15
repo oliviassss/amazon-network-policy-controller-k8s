@@ -61,25 +61,19 @@ func (r *defaultPolicyReferenceResolver) GetReferredPoliciesForService(ctx conte
 // GetReferredApplicationNetworkPoliciesForPod returns the application network policies matching the pod's labels in ingress or egress rules.
 // The podOld resource is used to determine the policies to reconcile for label changes.
 func (r *defaultPolicyReferenceResolver) GetReferredApplicationNetworkPoliciesForPod(ctx context.Context, pod *corev1.Pod, podOld *corev1.Pod) ([]policyinfo.ApplicationNetworkPolicy, error) {
-	// TODO: to implement the getReferredApplicationNetworkPoliciesForPod
-	// return r.getReferredApplicationNetworkPoliciesForPod(ctx, pod, podOld)
-	return nil, nil
+	return r.getReferredApplicationNetworkPoliciesForPod(ctx, pod, podOld)
 }
 
 // GetReferredApplicationNetworkPoliciesForNamespace returns the application network policies matching the namespace's labels in ingress or egress rules.
 // The nsOld resource is to account for namespace label changes during update.
 func (r *defaultPolicyReferenceResolver) GetReferredApplicationNetworkPoliciesForNamespace(ctx context.Context, ns *corev1.Namespace, nsOld *corev1.Namespace) ([]policyinfo.ApplicationNetworkPolicy, error) {
-	// TODO: to implement the getReferredApplicationNetworkPoliciesForNamespace
-	// return r.getReferredApplicationNetworkPoliciesForNamespace(ctx, ns, nsOld)
-	return nil, nil
+	return r.getReferredApplicationNetworkPoliciesForNamespace(ctx, ns, nsOld)
 }
 
 // GetReferredApplicationNetworkPoliciesForService returns the application network policies matching the service's pod selector in the egress rules.
 // The svcOld resource is to account for the service label changes during update.
 func (r *defaultPolicyReferenceResolver) GetReferredApplicationNetworkPoliciesForService(ctx context.Context, svc *corev1.Service, svcOld *corev1.Service) ([]policyinfo.ApplicationNetworkPolicy, error) {
-	// TODO: to implement the getReferredApplicationNetworkPoliciesForService
-	// return r.getReferredApplicationNetworkPoliciesForService(ctx, svc, svcOld)
-	return nil, nil
+	return r.getReferredApplicationNetworkPoliciesForService(ctx, svc, svcOld)
 }
 
 // GetReferredClusterPoliciesForPod returns the cluster network policies that might be affected by pod changes.

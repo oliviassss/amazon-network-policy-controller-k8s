@@ -53,11 +53,13 @@ func Test_policyReconciler_cleanupApplicationNetworkPolicy(t *testing.T) {
 	mockClient := mock_client.NewMockClient(ctrl)
 	mockFinalizerManager := &mockFinalizerManager{}
 	mockPolicyEndpointsManager := &mockPolicyEndpointsManager{}
+	mockPolicyTracker := &mockPolicyTracker{}
 
 	reconciler := &policyReconciler{
 		k8sClient:              mockClient,
 		finalizerManager:       mockFinalizerManager,
 		policyEndpointsManager: mockPolicyEndpointsManager,
+		policyTracker:          mockPolicyTracker,
 		logger:                 zap.New(),
 	}
 
@@ -217,6 +219,14 @@ func (m *mockPolicyTracker) GetPoliciesWithEgressRules() sets.Set[types.Namespac
 	return sets.Set[types.NamespacedName]{}
 }
 
+func (m *mockPolicyTracker) GetApplicationNetworkPoliciesWithNamespaceReferences() sets.Set[types.NamespacedName] {
+	return sets.Set[types.NamespacedName]{}
+}
+
+func (m *mockPolicyTracker) GetApplicationNetworkPoliciesWithEgressRules() sets.Set[types.NamespacedName] {
+	return sets.Set[types.NamespacedName]{}
+}
+
 func Test_policyReconciler_reconcileClusterNetworkPolicy(t *testing.T) {
 	ctrl := gomock.NewController(t)
 	defer ctrl.Finish()
@@ -252,11 +262,13 @@ func Test_policyReconciler_cleanupClusterNetworkPolicy(t *testing.T) {
 	mockClient := mock_client.NewMockClient(ctrl)
 	mockFinalizerManager := &mockFinalizerManager{}
 	mockPolicyEndpointsManager := &mockPolicyEndpointsManager{}
+	mockPolicyTracker := &mockPolicyTracker{}
 
 	reconciler := &policyReconciler{
 		k8sClient:              mockClient,
 		finalizerManager:       mockFinalizerManager,
 		policyEndpointsManager: mockPolicyEndpointsManager,
+		policyTracker:          mockPolicyTracker,
 		logger:                 zap.New(),
 	}
 

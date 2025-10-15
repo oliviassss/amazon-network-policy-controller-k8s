@@ -232,6 +232,7 @@ func (r *policyReconciler) reconcileApplicationNetworkPolicy(ctx context.Context
 
 func (r *policyReconciler) cleanupApplicationNetworkPolicy(ctx context.Context, applicationNetworkPolicy *policyinfo.ApplicationNetworkPolicy) error {
 	if k8s.HasFinalizer(applicationNetworkPolicy, anpFinalizerName) {
+		r.policyTracker.RemoveGenericPolicy(applicationNetworkPolicy)
 		if err := r.policyEndpointsManager.CleanupANP(ctx, applicationNetworkPolicy); err != nil {
 			return err
 		}
@@ -251,6 +252,7 @@ func (r *policyReconciler) reconcileClusterNetworkPolicy(ctx context.Context, cn
 
 func (r *policyReconciler) cleanupClusterNetworkPolicy(ctx context.Context, cnp *policyinfo.ClusterNetworkPolicy) error {
 	if k8s.HasFinalizer(cnp, cnpFinalizerName) {
+		r.policyTracker.RemoveGenericPolicy(cnp)
 		if err := r.policyEndpointsManager.CleanupCNP(ctx, cnp); err != nil {
 			return err
 		}

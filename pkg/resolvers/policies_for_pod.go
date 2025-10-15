@@ -3,6 +3,7 @@ package resolvers
 import (
 	"context"
 
+	policyinfo "github.com/aws/amazon-network-policy-controller-k8s/api/v1alpha1"
 	"github.com/aws/amazon-network-policy-controller-k8s/pkg/k8s"
 	"github.com/pkg/errors"
 	corev1 "k8s.io/api/core/v1"
@@ -102,6 +103,9 @@ func (r *defaultPolicyReferenceResolver) isPodReferredOnIngressEgress(ctx contex
 	return false
 }
 
+// TODO: Consider using generics or interfaces to reduce duplication between 
+// isPodLabelMatchPeer and isPodLabelMatchApplicationNetworkPolicyPeer.
+// Both functions have nearly identical logic but work with different peer types.
 func (r *defaultPolicyReferenceResolver) isPodLabelMatchPeer(ctx context.Context, pod *corev1.Pod, peer *networking.NetworkPolicyPeer, policyNamespace string) bool {
 	if peer.NamespaceSelector != nil {
 		ns := &corev1.Namespace{}
@@ -127,6 +131,130 @@ func (r *defaultPolicyReferenceResolver) isPodLabelMatchPeer(ctx context.Context
 		}
 	} else if pod.Namespace != policyNamespace {
 		r.logger.V(1).Info("Pod and policy namespace mismatch", "pod", k8s.NamespacedName(pod),
+			"policy ns", policyNamespace)
+		return false
+	}
+	podSelector, err := metav1.LabelSelectorAsSelector(peer.PodSelector)
+	if err != nil {
+		r.logger.Info("Unable to get pod selector", "err", err)
+		return false
+	}
+	if podSelector.Matches(labels.Set(pod.Labels)) {
+		return true
+	}
+	return false
+}
+func (r *defaultPolicyReferenceResolver) getReferredApplicationNetworkPoliciesForPod(ctx context.Context, pod *corev1.Pod, podOld *corev1.Pod) ([]policyinfo.ApplicationNetworkPolicy, error) {
+	policyList := &policyinfo.ApplicationNetworkPolicyList{}
+	if err := r.k8sClient.List(ctx, policyList, client.InNamespace(pod.Namespace)); err != nil {
+		return nil, errors.Wrap(err, "failed to fetch ANP policies")
+	}
+	processedPolicies := sets.Set[types.NamespacedName]{}
+	var referredPolicies []policyinfo.ApplicationNetworkPolicy
+	for _, pol := range policyList.Items {
+		if r.isPodMatchesANPPolicySelector(pod, podOld, &pol) {
+			referredPolicies = append(referredPolicies, pol)
+			processedPolicies.Insert(k8s.NamespacedName(&pol))
+			continue
+		}
+		if r.isPodReferredOnANPIngressEgress(ctx, pod, &pol) {
+			referredPolicies = append(referredPolicies, pol)
+			processedPolicies.Insert(k8s.NamespacedName(&pol))
+			continue
+		}
+		if podOld != nil && r.isPodReferredOnANPIngressEgress(ctx, podOld, &pol) {
+			referredPolicies = append(referredPolicies, pol)
+			processedPolicies.Insert(k8s.NamespacedName(&pol))
+		}
+	}
+	r.logger.V(1).Info("ANP Policies referred on the same namespace", "pod", k8s.NamespacedName(pod),
+		"policies", referredPolicies)
+
+	for _, ref := range r.policyTracker.GetApplicationNetworkPoliciesWithNamespaceReferences().UnsortedList() {
+		r.logger.V(1).Info("ANP Policy containing namespace selectors", "ref", ref)
+		if processedPolicies.Has(ref) {
+			continue
+		}
+		policy := &policyinfo.ApplicationNetworkPolicy{}
+		if err := r.k8sClient.Get(ctx, ref, policy); err != nil {
+			if client.IgnoreNotFound(err) != nil {
+				return nil, errors.Wrap(err, "failed to get ANP policy")
+			}
+			r.logger.V(1).Info("ANP Policy not found", "reference", ref)
+			continue
+		}
+
+		if r.isPodReferredOnANPIngressEgress(ctx, pod, policy) {
+			referredPolicies = append(referredPolicies, *policy)
+			processedPolicies.Insert(k8s.NamespacedName(policy))
+			continue
+		}
+		if podOld != nil && r.isPodReferredOnANPIngressEgress(ctx, podOld, policy) {
+			referredPolicies = append(referredPolicies, *policy)
+			processedPolicies.Insert(k8s.NamespacedName(policy))
+		}
+	}
+
+	r.logger.V(1).Info("All referred ANP policies", "pod", k8s.NamespacedName(pod), "policies", referredPolicies)
+	return referredPolicies, nil
+}
+
+func (r *defaultPolicyReferenceResolver) isPodMatchesANPPolicySelector(pod *corev1.Pod, podOld *corev1.Pod, policy *policyinfo.ApplicationNetworkPolicy) bool {
+	ps, err := metav1.LabelSelectorAsSelector(&policy.Spec.PodSelector)
+	if err != nil {
+		r.logger.Info("Unable to get pod label selector from ANP policy", "policy", k8s.NamespacedName(policy), "err", err)
+		return false
+	}
+	if ps.Matches(labels.Set(pod.Labels)) {
+		return true
+	}
+	if podOld != nil && ps.Matches(labels.Set(podOld.Labels)) {
+		return true
+	}
+	return false
+}
+
+func (r *defaultPolicyReferenceResolver) isPodReferredOnANPIngressEgress(ctx context.Context, pod *corev1.Pod, policy *policyinfo.ApplicationNetworkPolicy) bool {
+	for _, ingRule := range policy.Spec.Ingress {
+		for _, peer := range ingRule.From {
+			if r.isPodLabelMatchPeer(ctx, pod, &peer, policy.Namespace) {
+				return true
+			}
+		}
+	}
+	for _, egrRule := range policy.Spec.Egress {
+		for _, peer := range egrRule.To {
+			if r.isPodLabelMatchApplicationNetworkPolicyPeer(ctx, pod, &peer, policy.Namespace) {
+				return true
+			}
+		}
+	}
+	return false
+}
+
+func (r *defaultPolicyReferenceResolver) isPodLabelMatchApplicationNetworkPolicyPeer(ctx context.Context, pod *corev1.Pod, peer *policyinfo.ApplicationNetworkPolicyPeer, policyNamespace string) bool {
+	if peer.NamespaceSelector != nil {
+		ns := &corev1.Namespace{}
+		if err := r.k8sClient.Get(ctx, types.NamespacedName{Name: pod.Namespace}, ns); err != nil {
+			r.logger.Info("Unable to get namespace", "ns", pod.Namespace, "err", err)
+			return false
+		}
+		nsSelector, err := metav1.LabelSelectorAsSelector(peer.NamespaceSelector)
+		if err != nil {
+			r.logger.Info("Unable to get namespace selector", "selector", peer.NamespaceSelector, "err", err)
+			return false
+		}
+		if !nsSelector.Matches(labels.Set(ns.Labels)) {
+			return false
+		}
+
+		if peer.PodSelector == nil {
+			r.logger.V(1).Info("nsSelector matches ns labels", "selector", nsSelector,
+				"ns", ns)
+			return true
+		}
+	} else if pod.Namespace != policyNamespace {
+		r.logger.V(1).Info("Pod and ANP policy namespace mismatch", "pod", k8s.NamespacedName(pod),
 			"policy ns", policyNamespace)
 		return false
 	}

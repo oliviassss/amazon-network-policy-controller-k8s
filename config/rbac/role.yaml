@@ -46,6 +46,8 @@ rules:
 - apiGroups:
   - networking.k8s.aws
   resources:
+  - applicationnetworkpolicies
+  - clusternetworkpolicies
   - clusterpolicyendpoints
   - policyendpoints
   verbs:
@@ -60,8 +62,6 @@ rules:
   - networking.k8s.io
   resources:
   - networkpolicies
-  - applicationnetworkpolicies
-  - clusternetworkpolicies
   verbs:
   - get
   - list

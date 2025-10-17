@@ -38,11 +38,11 @@ func (r *defaultPolicyReferenceResolver) getReferredPoliciesForPod(ctx context.C
 			processedPolicies.Insert(k8s.NamespacedName(&pol))
 		}
 	}
-	r.logger.V(1).Info("Policies referred on the same namespace", "pod", k8s.NamespacedName(pod),
+	r.logger.Info("Policies referred on the same namespace", "pod", k8s.NamespacedName(pod),
 		"policies", referredPolicies)
 
 	for _, ref := range r.policyTracker.GetPoliciesWithNamespaceReferences().UnsortedList() {
-		r.logger.V(1).Info("Policy containing namespace selectors", "ref", ref)
+		r.logger.Info("Policy containing namespace selectors", "ref", ref)
 		if processedPolicies.Has(ref) {
 			continue
 		}
@@ -51,7 +51,7 @@ func (r *defaultPolicyReferenceResolver) getReferredPoliciesForPod(ctx context.C
 			if client.IgnoreNotFound(err) != nil {
 				return nil, errors.Wrap(err, "failed to get policy")
 			}
-			r.logger.V(1).Info("Policy not found", "reference", ref)
+			r.logger.Info("Policy not found", "reference", ref)
 			continue
 		}
 
@@ -66,7 +66,7 @@ func (r *defaultPolicyReferenceResolver) getReferredPoliciesForPod(ctx context.C
 		}
 	}
 
-	r.logger.V(1).Info("All referred policies", "pod", k8s.NamespacedName(pod), "policies", referredPolicies)
+	r.logger.Info("All referred policies", "pod", k8s.NamespacedName(pod), "policies", referredPolicies)
 	return referredPolicies, nil
 }
 
@@ -119,18 +119,18 @@ func (r *defaultPolicyReferenceResolver) isPodLabelMatchPeer(ctx context.Context
 			return false
 		}
 		if !nsSelector.Matches(labels.Set(ns.Labels)) {
-			r.logger.V(1).Info("nsSelector does not match ns labels", "selector", nsSelector,
+			r.logger.Info("nsSelector does not match ns labels", "selector", nsSelector,
 				"ns", ns)
 			return false
 		}
 
 		if peer.PodSelector == nil {
-			r.logger.V(1).Info("nsSelector matches ns labels", "selector", nsSelector,
+			r.logger.Info("nsSelector matches ns labels", "selector", nsSelector,
 				"ns", ns)
 			return true
 		}
 	} else if pod.Namespace != policyNamespace {
-		r.logger.V(1).Info("Pod and policy namespace mismatch", "pod", k8s.NamespacedName(pod),
+		r.logger.Info("Pod and policy namespace mismatch", "pod", k8s.NamespacedName(pod),
 			"policy ns", policyNamespace)
 		return false
 	}
@@ -151,6 +151,9 @@ func (r *defaultPolicyReferenceResolver) getReferredApplicationNetworkPoliciesFo
 	}
 	processedPolicies := sets.Set[types.NamespacedName]{}
 	var referredPolicies []policyinfo.ApplicationNetworkPolicy
+	
+	// First loop: Process same-namespace ANP policies
+	// Check policies in the pod's namespace for selector matches or ingress/egress references
 	for _, pol := range policyList.Items {
 		if r.isPodMatchesANPPolicySelector(pod, podOld, &pol) {
 			referredPolicies = append(referredPolicies, pol)
@@ -167,11 +170,13 @@ func (r *defaultPolicyReferenceResolver) getReferredApplicationNetworkPoliciesFo
 			processedPolicies.Insert(k8s.NamespacedName(&pol))
 		}
 	}
-	r.logger.V(1).Info("ANP Policies referred on the same namespace", "pod", k8s.NamespacedName(pod),
+	r.logger.Info("ANP Policies referred on the same namespace", "pod", k8s.NamespacedName(pod),
 		"policies", referredPolicies)
 
+	// Second loop: Process cross-namespace ANP policies
+	// Check policies from other namespaces that have namespaceSelector rules
 	for _, ref := range r.policyTracker.GetApplicationNetworkPoliciesWithNamespaceReferences().UnsortedList() {
-		r.logger.V(1).Info("ANP Policy containing namespace selectors", "ref", ref)
+		r.logger.Info("ANP Policy containing namespace selectors", "ref", ref)
 		if processedPolicies.Has(ref) {
 			continue
 		}
@@ -180,7 +185,7 @@ func (r *defaultPolicyReferenceResolver) getReferredApplicationNetworkPoliciesFo
 			if client.IgnoreNotFound(err) != nil {
 				return nil, errors.Wrap(err, "failed to get ANP policy")
 			}
-			r.logger.V(1).Info("ANP Policy not found", "reference", ref)
+			r.logger.Info("ANP Policy not found", "reference", ref)
 			continue
 		}
 
@@ -195,7 +200,7 @@ func (r *defaultPolicyReferenceResolver) getReferredApplicationNetworkPoliciesFo
 		}
 	}
 
-	r.logger.V(1).Info("All referred ANP policies", "pod", k8s.NamespacedName(pod), "policies", referredPolicies)
+	r.logger.Info("All referred ANP policies", "pod", k8s.NamespacedName(pod), "policies", referredPolicies)
 	return referredPolicies, nil
 }
 
@@ -249,12 +254,12 @@ func (r *defaultPolicyReferenceResolver) isPodLabelMatchApplicationNetworkPolicy
 		}
 
 		if peer.PodSelector == nil {
-			r.logger.V(1).Info("nsSelector matches ns labels", "selector", nsSelector,
+			r.logger.Info("nsSelector matches ns labels", "selector", nsSelector,
 				"ns", ns)
 			return true
 		}
 	} else if pod.Namespace != policyNamespace {
-		r.logger.V(1).Info("Pod and ANP policy namespace mismatch", "pod", k8s.NamespacedName(pod),
+		r.logger.Info("Pod and ANP policy namespace mismatch", "pod", k8s.NamespacedName(pod),
 			"policy ns", policyNamespace)
 		return false
 	}

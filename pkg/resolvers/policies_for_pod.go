@@ -103,7 +103,7 @@ func (r *defaultPolicyReferenceResolver) isPodReferredOnIngressEgress(ctx contex
 	return false
 }
 
-// TODO: Consider using generics or interfaces to reduce duplication between 
+// TODO: Consider using generics or interfaces to reduce duplication between
 // isPodLabelMatchPeer and isPodLabelMatchApplicationNetworkPolicyPeer.
 // Both functions have nearly identical logic but work with different peer types.
 func (r *defaultPolicyReferenceResolver) isPodLabelMatchPeer(ctx context.Context, pod *corev1.Pod, peer *networking.NetworkPolicyPeer, policyNamespace string) bool {
@@ -151,7 +151,7 @@ func (r *defaultPolicyReferenceResolver) getReferredApplicationNetworkPoliciesFo
 	}
 	processedPolicies := sets.Set[types.NamespacedName]{}
 	var referredPolicies []policyinfo.ApplicationNetworkPolicy
-	
+
 	// First loop: Process same-namespace ANP policies
 	// Check policies in the pod's namespace for selector matches or ingress/egress references
 	for _, pol := range policyList.Items {

@@ -53,33 +53,14 @@ func (r *clusterNetworkPolicyEndpointsResolver) ResolveClusterNetworkPolicy(ctx 
 		// Egress-only with namespaces:{} - skip expensive pod enumeration
 		allPodEndpoints = []policyinfo.PodEndpoint{}
 	} else {
-		// 2. Reuse existing NP resolver for each target namespace (for ingress rules)
-		for _, ns := range targetNamespaces {
-			// Create a temporary NP-like structure to reuse existing resolver
-			tempNP := r.convertCNPToNetworkPolicy(cnp, ns)
-
-			// Reuse existing NP resolver for ingress and pod selection
-			ingressRules, _, podEndpoints, err := r.baseResolver.Resolve(ctx, tempNP)
-			if err != nil {
-				return nil, nil, nil, err
-			}
-
-			// Convert NP EndpointInfo to CNP ClusterEndpointInfo with actions
-			for i, rule := range ingressRules {
-				if i < len(cnp.Spec.Ingress) {
-					allIngressRules = append(allIngressRules, policyinfo.ClusterEndpointInfo{
-						CIDR:   rule.CIDR,
-						Ports:  rule.Ports,
-						Action: cnp.Spec.Ingress[i].Action,
-					})
-				}
-			}
-
-			allPodEndpoints = append(allPodEndpoints, podEndpoints...)
+		// 3. Process each CNP ingress rule individually
+		allIngressRules, allPodEndpoints, err = r.resolveCNPIngressRules(ctx, cnp, targetNamespaces)
+		if err != nil {
+			return nil, nil, nil, err
 		}
 	}
 
-	// 3. Handle CNP-specific egress rules (process once, not per namespace)
+	// 4. Handle CNP-specific egress rules (process once, not per namespace)
 	egressRules, err := r.resolveCNPEgressRules(ctx, cnp, targetNamespaces)
 	if err != nil {
 		return nil, nil, nil, err
@@ -332,6 +313,46 @@ func (r *clusterNetworkPolicyEndpointsResolver) resolveCNPEgressRules(ctx contex
 	return endpointInfos, nil
 }
 
+func (r *clusterNetworkPolicyEndpointsResolver) convertSingleCNPIngressRuleToNP(cnp *policyinfo.ClusterNetworkPolicy, rule policyinfo.ClusterNetworkPolicyIngressRule, namespace string) *networking.NetworkPolicy {
+	// Convert CNP ingress peers to NP peers
+	var npPeers []networking.NetworkPolicyPeer
+	for _, peer := range rule.From {
+		npPeer := networking.NetworkPolicyPeer{}
+		if peer.Namespaces != nil {
+			npPeer.NamespaceSelector = peer.Namespaces
+		}
+		if peer.Pods != nil {
+			npPeer.NamespaceSelector = &peer.Pods.NamespaceSelector
+			npPeer.PodSelector = &peer.Pods.PodSelector
+		}
+		npPeers = append(npPeers, npPeer)
+	}
+
+	ingressRule := networking.NetworkPolicyIngressRule{
+		From: npPeers,
+	}
+	if rule.Ports != nil {
+		ingressRule.Ports = r.convertCNPPortsToNPPorts(*rule.Ports)
+	}
+
+	// Determine pod selector based on CNP subject
+	var podSelector metav1.LabelSelector
+	if cnp.Spec.Subject.Pods != nil {
+		podSelector = cnp.Spec.Subject.Pods.PodSelector
+	}
+
+	return &networking.NetworkPolicy{
+		ObjectMeta: metav1.ObjectMeta{
+			Name:      cnp.Name,
+			Namespace: namespace,
+		},
+		Spec: networking.NetworkPolicySpec{
+			PodSelector: podSelector,
+			Ingress:     []networking.NetworkPolicyIngressRule{ingressRule},
+		},
+	}
+}
+
 func (r *clusterNetworkPolicyEndpointsResolver) convertSingleCNPEgressRuleToNP(cnp *policyinfo.ClusterNetworkPolicy, rule policyinfo.ClusterNetworkPolicyEgressRule, namespace string) *networking.NetworkPolicy {
 	// Convert only CIDR/namespace/pod peers, skip domainNames
 	var npPeers []networking.NetworkPolicyPeer
@@ -383,4 +404,30 @@ func (r *clusterNetworkPolicyEndpointsResolver) convertSingleCNPEgressRuleToNP(c
 			Egress:      []networking.NetworkPolicyEgressRule{egressRule},
 		},
 	}
+}
+func (r *clusterNetworkPolicyEndpointsResolver) resolveCNPIngressRules(ctx context.Context, cnp *policyinfo.ClusterNetworkPolicy, targetNamespaces []string) ([]policyinfo.ClusterEndpointInfo, []policyinfo.PodEndpoint, error) {
+	var allIngressRules []policyinfo.ClusterEndpointInfo
+	var allPodEndpoints []policyinfo.PodEndpoint
+
+	for _, rule := range cnp.Spec.Ingress {
+		for _, ns := range targetNamespaces {
+			tempNP := r.convertSingleCNPIngressRuleToNP(cnp, rule, ns)
+			ingressRules, _, podEndpoints, err := r.baseResolver.Resolve(ctx, tempNP)
+			if err != nil {
+				return nil, nil, err
+			}
+
+			for _, endpoint := range ingressRules {
+				allIngressRules = append(allIngressRules, policyinfo.ClusterEndpointInfo{
+					CIDR:   endpoint.CIDR,
+					Ports:  endpoint.Ports,
+					Action: rule.Action,
+				})
+			}
+
+			allPodEndpoints = append(allPodEndpoints, podEndpoints...)
+		}
+	}
+
+	return allIngressRules, allPodEndpoints, nil
 }

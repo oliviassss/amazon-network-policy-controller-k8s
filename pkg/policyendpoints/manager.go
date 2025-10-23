@@ -739,41 +739,54 @@ func (m *policyEndpointsManager) CleanupCNP(ctx context.Context, cnp *policyinfo
 }
 
 func (m *policyEndpointsManager) computeClusterPolicyEndpoints(cnp *policyinfo.ClusterNetworkPolicy, existingCPEs []policyinfo.ClusterPolicyEndpoint, ingressRules []policyinfo.ClusterEndpointInfo, egressRules []policyinfo.ClusterEndpointInfo, podSelectorEndpoints []policyinfo.PodEndpoint) ([]policyinfo.ClusterPolicyEndpoint, []policyinfo.ClusterPolicyEndpoint, []policyinfo.ClusterPolicyEndpoint, error) {
-	// Simple implementation: create one CPE per CNP
-	desiredCPE := policyinfo.ClusterPolicyEndpoint{
-		ObjectMeta: metav1.ObjectMeta{
-			Name: cnp.Name + "-cpe",
-			OwnerReferences: []metav1.OwnerReference{
-				{
-					APIVersion:         cnp.APIVersion,
-					Kind:               cnp.Kind,
-					Name:               cnp.Name,
-					UID:                cnp.UID,
-					BlockOwnerDeletion: &[]bool{true}[0],
-					Controller:         &[]bool{true}[0],
-				},
-			},
-		},
-		Spec: policyinfo.ClusterPolicyEndpointSpec{
-			PolicyRef: policyinfo.ClusterPolicyReference{
-				Name: cnp.Name,
-			},
-			Tier:                 cnp.Spec.Tier,
-			Priority:             cnp.Spec.Priority,
-			Subject:              cnp.Spec.Subject,
-			PodSelectorEndpoints: podSelectorEndpoints,
-			Ingress:              ingressRules,
-			Egress:               egressRules,
-		},
+	// Process existing CPEs and convert rules to maps for chunking
+	ingressEndpointsMap, egressEndpointsMap, podSelectorEndpointSet, modifiedCPEs, potentialDeletes := m.processExistingClusterPolicyEndpoints(
+		existingCPEs, ingressRules, egressRules, podSelectorEndpoints,
+	)
+
+	doNotDelete := sets.Set[types.NamespacedName]{}
+	var createCPEs []policyinfo.ClusterPolicyEndpoint
+	var updateCPEs []policyinfo.ClusterPolicyEndpoint
+	var deleteCPEs []policyinfo.ClusterPolicyEndpoint
+
+	// Create metadata for ClusterNetworkPolicy
+	cnpMetadata := ClusterPolicyMetadata{
+		Name:     cnp.Name,
+		UID:      cnp.UID,
+		Tier:     cnp.Spec.Tier,
+		Priority: cnp.Spec.Priority,
+		Subject:  cnp.Spec.Subject,
 	}
 
-	// Simple logic: if no existing CPE, create new one
-	if len(existingCPEs) == 0 {
-		return []policyinfo.ClusterPolicyEndpoint{desiredCPE}, nil, nil, nil
+	// Use chunking logic (same pattern as NP/ANP)
+	createCPEs, doNotDeleteIngress := m.packingClusterIngressRules(cnpMetadata, ingressEndpointsMap, createCPEs, modifiedCPEs, potentialDeletes)
+	createCPEs, doNotDeleteEgress := m.packingClusterEgressRules(cnpMetadata, egressEndpointsMap, createCPEs, modifiedCPEs, potentialDeletes)
+	createCPEs, doNotDeletePs := m.packingClusterPodSelectorEndpoints(cnpMetadata, podSelectorEndpointSet.UnsortedList(), createCPEs, modifiedCPEs, potentialDeletes)
+
+	doNotDelete.Insert(doNotDeleteIngress.UnsortedList()...)
+	doNotDelete.Insert(doNotDeleteEgress.UnsortedList()...)
+	doNotDelete.Insert(doNotDeletePs.UnsortedList()...)
+
+	for _, cpe := range potentialDeletes {
+		if doNotDelete.Has(types.NamespacedName{Name: cpe.Name}) {
+			updateCPEs = append(updateCPEs, cpe)
+		} else {
+			deleteCPEs = append(deleteCPEs, cpe)
+		}
+	}
+	updateCPEs = append(updateCPEs, modifiedCPEs...)
+
+	// Ensure at least one CPE exists
+	if len(createCPEs) == 0 && len(updateCPEs) == 0 {
+		if len(deleteCPEs) == 0 {
+			newCPE := m.newClusterPolicyEndpoint(cnpMetadata, nil, nil, nil)
+			createCPEs = append(createCPEs, newCPE)
+		} else {
+			cpe := deleteCPEs[0]
+			updateCPEs = append(updateCPEs, cpe)
+			deleteCPEs = deleteCPEs[1:]
+		}
 	}
 
-	// If exists, update it
-	existingCPE := existingCPEs[0]
-	existingCPE.Spec = desiredCPE.Spec
-	return nil, []policyinfo.ClusterPolicyEndpoint{existingCPE}, nil, nil
+	return createCPEs, updateCPEs, deleteCPEs, nil
 }

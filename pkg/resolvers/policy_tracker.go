@@ -32,16 +32,16 @@ func NewPolicyTracker(logger logr.Logger) PolicyTracker {
 var _ PolicyTracker = (*defaultPolicyTracker)(nil)
 
 type defaultPolicyTracker struct {
-	logger                     logr.Logger
-	namespacedPolicies         sync.Map
-	egressRulesPolicies        sync.Map
-	namespacedANP      sync.Map
-	egressRulesANP     sync.Map
-	namespacedCNP      sync.Map
-	egressRulesCNP     sync.Map
+	logger              logr.Logger
+	namespacedPolicies  sync.Map
+	egressRulesPolicies sync.Map
+	namespacedANP       sync.Map
+	egressRulesANP      sync.Map
+	namespacedCNP       sync.Map
+	egressRulesCNP      sync.Map
 }
 
-// TODO: consolidation the tracker for NP, ANP and CNP 
+// TODO: consolidation the tracker for NP, ANP and CNP
 // UpdateGenericPolicy handles NetworkPolicy, ApplicationNetworkPolicy, and ClusterNetworkPolicy
 func (t *defaultPolicyTracker) UpdateGenericPolicy(obj client.Object) {
 	switch policy := obj.(type) {
@@ -203,7 +203,7 @@ func (t *defaultPolicyTracker) updateCNP(policy *policyinfo.ClusterNetworkPolicy
 	// CNP is cluster-wide, always assume it has namespace references
 	t.logger.V(1).Info("CNP is cluster-wide, tracking for ns references", "policy", policyName)
 	t.namespacedCNP.Store(policyName, true)
-	
+
 	if t.containsCNPEgressRules(policy) {
 		t.logger.V(1).Info("CNP contains egress rules", "policy", policyName)
 		t.egressRulesCNP.Store(policyName, true)

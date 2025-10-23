@@ -21,11 +21,11 @@ func (r *defaultPolicyReferenceResolver) getReferredPoliciesForService(ctx conte
 		r.logger.Info("Ignoring headless service", "svc", k8s.NamespacedName(svc))
 		return nil, nil
 	}
-	
+
 	// Get potential matches using the reusable helper
 	potentialMatches := r.getPotentialPolicyMatches(svc, r.policyTracker.GetPoliciesWithEgressRules(), r.policyTracker.GetPoliciesWithNamespaceReferences())
 	r.logger.Info("Potential matches", "policies", potentialMatches.UnsortedList(), "svc", k8s.NamespacedName(svc))
-	
+
 	var networkPolicyList []networking.NetworkPolicy
 	for policyRef := range potentialMatches {
 		r.logger.Info("Checking policy", "reference", policyRef)
@@ -55,11 +55,11 @@ func (r *defaultPolicyReferenceResolver) getReferredApplicationNetworkPoliciesFo
 		r.logger.Info("Ignoring headless service", "svc", k8s.NamespacedName(svc))
 		return nil, nil
 	}
-	
+
 	// Get potential ANP matches using the same logic as NetworkPolicy
 	potentialMatches := r.getPotentialPolicyMatches(svc, r.policyTracker.GetApplicationNetworkPoliciesWithEgressRules(), r.policyTracker.GetApplicationNetworkPoliciesWithNamespaceReferences())
 	r.logger.Info("Potential ANP matches", "policies", potentialMatches.UnsortedList(), "svc", k8s.NamespacedName(svc))
-	
+
 	var anpList []policyinfo.ApplicationNetworkPolicy
 	for policyRef := range potentialMatches {
 		r.logger.Info("Checking ANP", "reference", policyRef)

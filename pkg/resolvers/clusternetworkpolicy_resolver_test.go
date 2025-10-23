@@ -581,3 +581,254 @@ func TestClusterNetworkPolicyEndpointsResolver_ResolveClusterNetworkPolicy(t *te
 		})
 	}
 }
+func TestCNPIngressResolution_MultiplePods(t *testing.T) {
+	// Test case for the DNS CNP bug - ingress should resolve all matching pods
+	tests := []struct {
+		name                 string
+		cnp                  *policyinfo.ClusterNetworkPolicy
+		pods                 []corev1.Pod
+		namespaces           []corev1.Namespace
+		expectedIngressCount int
+		expectedPodIPs       []string
+	}{
+		{
+			name: "ingress rule with podSelector should resolve all matching pods",
+			cnp: &policyinfo.ClusterNetworkPolicy{
+				ObjectMeta: metav1.ObjectMeta{Name: "test-cnp"},
+				Spec: policyinfo.ClusterNetworkPolicySpec{
+					Tier:     "Admin",
+					Priority: 100,
+					Subject: policyinfo.ClusterNetworkPolicySubject{
+						Namespaces: &metav1.LabelSelector{
+							MatchLabels: map[string]string{
+								"kubernetes.io/metadata.name": "default",
+							},
+						},
+					},
+					Ingress: []policyinfo.ClusterNetworkPolicyIngressRule{
+						{
+							Name:   "allow-coredns",
+							Action: "Accept",
+							From: []policyinfo.ClusterNetworkPolicyIngressPeer{
+								{
+									Pods: &policyinfo.NamespacedPod{
+										NamespaceSelector: metav1.LabelSelector{
+											MatchLabels: map[string]string{
+												"kubernetes.io/metadata.name": "kube-system",
+											},
+										},
+										PodSelector: metav1.LabelSelector{
+											MatchLabels: map[string]string{
+												"k8s-app": "kube-dns",
+											},
+										},
+									},
+								},
+							},
+							Ports: &[]policyinfo.ClusterNetworkPolicyPort{
+								{
+									PortNumber: &policyinfo.CNPPort{
+										Protocol: corev1.ProtocolUDP,
+										Port:     53,
+									},
+								},
+							},
+						},
+					},
+				},
+			},
+			namespaces: []corev1.Namespace{
+				{
+					ObjectMeta: metav1.ObjectMeta{
+						Name: "default",
+						Labels: map[string]string{
+							"kubernetes.io/metadata.name": "default",
+						},
+					},
+				},
+				{
+					ObjectMeta: metav1.ObjectMeta{
+						Name: "kube-system",
+						Labels: map[string]string{
+							"kubernetes.io/metadata.name": "kube-system",
+						},
+					},
+				},
+			},
+			pods: []corev1.Pod{
+				{
+					ObjectMeta: metav1.ObjectMeta{
+						Name:      "test-pod",
+						Namespace: "default",
+					},
+					Status: corev1.PodStatus{
+						PodIP: "192.168.1.100",
+					},
+				},
+				{
+					ObjectMeta: metav1.ObjectMeta{
+						Name:      "coredns-1",
+						Namespace: "kube-system",
+						Labels: map[string]string{
+							"k8s-app": "kube-dns",
+						},
+					},
+					Status: corev1.PodStatus{
+						PodIP: "192.168.25.168", // First CoreDNS pod
+					},
+				},
+				{
+					ObjectMeta: metav1.ObjectMeta{
+						Name:      "coredns-2",
+						Namespace: "kube-system",
+						Labels: map[string]string{
+							"k8s-app": "kube-dns",
+						},
+					},
+					Status: corev1.PodStatus{
+						PodIP: "192.168.13.154", // Second CoreDNS pod
+					},
+				},
+			},
+			expectedIngressCount: 2, // Should resolve both CoreDNS pods
+			expectedPodIPs:       []string{"192.168.25.168", "192.168.13.154"},
+		},
+	}
+
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			// Create fake client with test objects
+			scheme := runtime.NewScheme()
+			_ = corev1.AddToScheme(scheme)
+			_ = policyinfo.AddToScheme(scheme)
+
+			objs := []runtime.Object{}
+			for _, ns := range tt.namespaces {
+				objs = append(objs, &ns)
+			}
+			for _, pod := range tt.pods {
+				objs = append(objs, &pod)
+			}
+
+			fakeClient := fake.NewClientBuilder().
+				WithScheme(scheme).
+				WithRuntimeObjects(objs...).
+				Build()
+
+			// Create resolver
+			resolver := NewClusterNetworkPolicyEndpointsResolver(fakeClient, logr.Discard())
+
+			// Test the resolution
+			ingressRules, egressRules, podEndpoints, err := resolver.ResolveClusterNetworkPolicy(context.Background(), tt.cnp)
+
+			// Verify results
+			assert.NoError(t, err)
+			assert.Equal(t, tt.expectedIngressCount, len(ingressRules), "Should resolve all matching pods for ingress")
+			assert.Empty(t, egressRules, "No egress rules expected")
+			assert.NotEmpty(t, podEndpoints, "Should have pod endpoints")
+
+			// Verify all expected pod IPs are present in ingress rules
+			actualIPs := make([]string, len(ingressRules))
+			for i, rule := range ingressRules {
+				actualIPs[i] = string(rule.CIDR)
+				assert.Equal(t, policyinfo.ClusterNetworkPolicyRuleAction("Accept"), rule.Action)
+			}
+
+			for _, expectedIP := range tt.expectedPodIPs {
+				assert.Contains(t, actualIPs, expectedIP, "Expected pod IP should be in ingress rules")
+			}
+		})
+	}
+}
+
+func TestCNPIngressResolution_SingleRule(t *testing.T) {
+	// Test that single pod resolution still works
+	cnp := &policyinfo.ClusterNetworkPolicy{
+		ObjectMeta: metav1.ObjectMeta{Name: "test-single"},
+		Spec: policyinfo.ClusterNetworkPolicySpec{
+			Tier:     "Admin",
+			Priority: 100,
+			Subject: policyinfo.ClusterNetworkPolicySubject{
+				Namespaces: &metav1.LabelSelector{
+					MatchLabels: map[string]string{
+						"test": "target",
+					},
+				},
+			},
+			Ingress: []policyinfo.ClusterNetworkPolicyIngressRule{
+				{
+					Name:   "allow-single",
+					Action: "Accept",
+					From: []policyinfo.ClusterNetworkPolicyIngressPeer{
+						{
+							Namespaces: &metav1.LabelSelector{
+								MatchLabels: map[string]string{
+									"source": "allowed",
+								},
+							},
+						},
+					},
+				},
+			},
+		},
+	}
+
+	namespaces := []corev1.Namespace{
+		{
+			ObjectMeta: metav1.ObjectMeta{
+				Name:   "target-ns",
+				Labels: map[string]string{"test": "target"},
+			},
+		},
+		{
+			ObjectMeta: metav1.ObjectMeta{
+				Name:   "source-ns",
+				Labels: map[string]string{"source": "allowed"},
+			},
+		},
+	}
+
+	pods := []corev1.Pod{
+		{
+			ObjectMeta: metav1.ObjectMeta{
+				Name:      "target-pod",
+				Namespace: "target-ns",
+			},
+			Status: corev1.PodStatus{PodIP: "10.0.1.1"},
+		},
+		{
+			ObjectMeta: metav1.ObjectMeta{
+				Name:      "source-pod",
+				Namespace: "source-ns",
+			},
+			Status: corev1.PodStatus{PodIP: "10.0.2.1"},
+		},
+	}
+
+	// Create fake client
+	scheme := runtime.NewScheme()
+	_ = corev1.AddToScheme(scheme)
+	_ = policyinfo.AddToScheme(scheme)
+
+	objs := []runtime.Object{}
+	for _, ns := range namespaces {
+		objs = append(objs, &ns)
+	}
+	for _, pod := range pods {
+		objs = append(objs, &pod)
+	}
+
+	fakeClient := fake.NewClientBuilder().
+		WithScheme(scheme).
+		WithRuntimeObjects(objs...).
+		Build()
+
+	resolver := NewClusterNetworkPolicyEndpointsResolver(fakeClient, logr.Discard())
+
+	ingressRules, _, _, err := resolver.ResolveClusterNetworkPolicy(context.Background(), cnp)
+
+	assert.NoError(t, err)
+	assert.Equal(t, 1, len(ingressRules))
+	assert.Equal(t, "10.0.2.1", string(ingressRules[0].CIDR))
+	assert.Equal(t, policyinfo.ClusterNetworkPolicyRuleAction("Accept"), ingressRules[0].Action)
+}

@@ -52,11 +52,8 @@ type ClusterPolicyEndpointSpec struct {
 	// Priority from the CNP
 	Priority int32 `json:"priority"`
 
-	// Subject from the CNP
-	Subject ClusterNetworkPolicySubject `json:"subject"`
-
 	// PodSelectorEndpoints contains information about the pods
-	// matching the subject across all namespaces
+	// matching the policy across all namespaces
 	PodSelectorEndpoints []PodEndpoint `json:"podSelectorEndpoints,omitempty"`
 
 	// Ingress is the list of ingress rules containing resolved network addresses

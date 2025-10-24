@@ -755,7 +755,6 @@ func (m *policyEndpointsManager) computeClusterPolicyEndpoints(cnp *policyinfo.C
 		UID:      cnp.UID,
 		Tier:     cnp.Spec.Tier,
 		Priority: cnp.Spec.Priority,
-		Subject:  cnp.Spec.Subject,
 	}
 
 	// Use chunking logic (same pattern as NP/ANP)

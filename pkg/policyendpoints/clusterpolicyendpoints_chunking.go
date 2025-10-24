@@ -19,7 +19,6 @@ type ClusterPolicyMetadata struct {
 	UID      types.UID
 	Tier     policyinfo.Tier
 	Priority int32
-	Subject  policyinfo.ClusterNetworkPolicySubject
 }
 
 // processExistingClusterPolicyEndpoints processes existing CPE objects and converts them to maps for efficient chunking
@@ -247,7 +246,6 @@ func (m *policyEndpointsManager) newClusterPolicyEndpoint(metadata ClusterPolicy
 			},
 			Tier:                 metadata.Tier,
 			Priority:             metadata.Priority,
-			Subject:              metadata.Subject,
 			PodSelectorEndpoints: podSelectorEndpoints,
 			Ingress:              ingressRules,
 			Egress:               egressRules,

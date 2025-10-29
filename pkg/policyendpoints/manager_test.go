@@ -1106,3 +1106,105 @@ func (m *mockCNPEndpointsResolver) ResolveClusterNetworkPolicy(ctx context.Conte
 	m.called = true
 	return m.ingressRules, m.egressRules, m.podEndpoints, nil
 }
+
+func Test_combineClusterRulesEndpoints(t *testing.T) {
+	protocol := corev1.ProtocolTCP
+	port53 := int32(53)
+	port80 := int32(80)
+
+	tests := []struct {
+		name      string
+		endpoints []policyinfo.ClusterEndpointInfo
+		expected  []policyinfo.ClusterEndpointInfo
+	}{
+		{
+			name: "combine same CIDR and action",
+			endpoints: []policyinfo.ClusterEndpointInfo{
+				{
+					CIDR:   "10.0.0.1/32",
+					Action: policyinfo.ClusterNetworkPolicyRuleActionAccept,
+					Ports:  []policyinfo.Port{{Protocol: &protocol, Port: &port53}},
+				},
+				{
+					CIDR:   "10.0.0.1/32",
+					Action: policyinfo.ClusterNetworkPolicyRuleActionAccept,
+					Ports:  []policyinfo.Port{{Protocol: &protocol, Port: &port80}},
+				},
+			},
+			expected: []policyinfo.ClusterEndpointInfo{
+				{
+					CIDR:   "10.0.0.1/32",
+					Action: policyinfo.ClusterNetworkPolicyRuleActionAccept,
+					Ports: []policyinfo.Port{
+						{Protocol: &protocol, Port: &port53},
+						{Protocol: &protocol, Port: &port80},
+					},
+				},
+			},
+		},
+		{
+			name: "don't combine different actions",
+			endpoints: []policyinfo.ClusterEndpointInfo{
+				{
+					CIDR:   "10.0.0.1/32",
+					Action: policyinfo.ClusterNetworkPolicyRuleActionAccept,
+					Ports:  []policyinfo.Port{{Protocol: &protocol, Port: &port53}},
+				},
+				{
+					CIDR:   "10.0.0.1/32",
+					Action: policyinfo.ClusterNetworkPolicyRuleActionDeny,
+					Ports:  []policyinfo.Port{{Protocol: &protocol, Port: &port80}},
+				},
+			},
+			expected: []policyinfo.ClusterEndpointInfo{
+				{
+					CIDR:   "10.0.0.1/32",
+					Action: policyinfo.ClusterNetworkPolicyRuleActionAccept,
+					Ports:  []policyinfo.Port{{Protocol: &protocol, Port: &port53}},
+				},
+				{
+					CIDR:   "10.0.0.1/32",
+					Action: policyinfo.ClusterNetworkPolicyRuleActionDeny,
+					Ports:  []policyinfo.Port{{Protocol: &protocol, Port: &port80}},
+				},
+			},
+		},
+		{
+			name: "combine same domain and action",
+			endpoints: []policyinfo.ClusterEndpointInfo{
+				{
+					DomainName: "example.com",
+					Action:     policyinfo.ClusterNetworkPolicyRuleActionAccept,
+					Ports:      []policyinfo.Port{{Protocol: &protocol, Port: &port53}},
+				},
+				{
+					DomainName: "example.com",
+					Action:     policyinfo.ClusterNetworkPolicyRuleActionAccept,
+					Ports:      []policyinfo.Port{{Protocol: &protocol, Port: &port80}},
+				},
+			},
+			expected: []policyinfo.ClusterEndpointInfo{
+				{
+					DomainName: "example.com",
+					Action:     policyinfo.ClusterNetworkPolicyRuleActionAccept,
+					Ports: []policyinfo.Port{
+						{Protocol: &protocol, Port: &port53},
+						{Protocol: &protocol, Port: &port80},
+					},
+				},
+			},
+		},
+		{
+			name:      "empty input",
+			endpoints: []policyinfo.ClusterEndpointInfo{},
+			expected:  nil,
+		},
+	}
+
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			result := combineClusterRulesEndpoints(tt.endpoints)
+			assert.ElementsMatch(t, tt.expected, result)
+		})
+	}
+}

@@ -4,6 +4,7 @@ import (
 	"context"
 	"crypto/sha256"
 	"encoding/hex"
+	"fmt"
 	"strconv"
 
 	"golang.org/x/exp/maps"
@@ -787,5 +788,71 @@ func (m *policyEndpointsManager) computeClusterPolicyEndpoints(cnp *policyinfo.C
 		}
 	}
 
-	return createCPEs, updateCPEs, deleteCPEs, nil
+	return m.processClusterPolicyEndpoints(createCPEs), m.processClusterPolicyEndpoints(updateCPEs), deleteCPEs, nil
+}
+
+func (m *policyEndpointsManager) processClusterPolicyEndpoints(cpes []policyinfo.ClusterPolicyEndpoint) []policyinfo.ClusterPolicyEndpoint {
+	var newCPEs []policyinfo.ClusterPolicyEndpoint
+	for _, cpe := range cpes {
+		cpe.Spec.Ingress = combineClusterRulesEndpoints(cpe.Spec.Ingress)
+		cpe.Spec.Egress = combineClusterRulesEndpoints(cpe.Spec.Egress)
+		newCPEs = append(newCPEs, cpe)
+	}
+	return newCPEs
+}
+
+// combineClusterRulesEndpoints consolidates ClusterEndpointInfo entries with the same CIDR/DomainName and Action
+func combineClusterRulesEndpoints(endpoints []policyinfo.ClusterEndpointInfo) []policyinfo.ClusterEndpointInfo {
+	combinedMap := make(map[string]policyinfo.ClusterEndpointInfo)
+	for _, ep := range endpoints {
+		var key string
+		if ep.CIDR != "" {
+			key = string(ep.CIDR) + ":" + string(ep.Action)
+		} else if ep.DomainName != "" {
+			key = string(ep.DomainName) + ":" + string(ep.Action)
+		} else {
+			continue // Skip invalid entries
+		}
+
+		if existing, ok := combinedMap[key]; ok {
+			existing.Ports = deduplicatePorts(append(existing.Ports, ep.Ports...))
+			combinedMap[key] = existing
+		} else {
+			combinedMap[key] = ep
+		}
+	}
+
+	if len(combinedMap) > 0 {
+		return maps.Values(combinedMap)
+	}
+	return nil
+}
+
+// deduplicatePorts removes duplicate port entries
+func deduplicatePorts(ports []policyinfo.Port) []policyinfo.Port {
+	seen := make(map[string]bool)
+	var result []policyinfo.Port
+
+	for _, port := range ports {
+		protocol := "TCP"
+		if port.Protocol != nil {
+			protocol = string(*port.Protocol)
+		}
+		portNum := int32(0)
+		if port.Port != nil {
+			portNum = *port.Port
+		}
+		endPort := int32(0)
+		if port.EndPort != nil {
+			endPort = *port.EndPort
+		}
+
+		key := fmt.Sprintf("%s:%d:%d", protocol, portNum, endPort)
+		if !seen[key] {
+			seen[key] = true
+			result = append(result, port)
+		}
+	}
+
+	return result
 }

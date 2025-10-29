@@ -99,9 +99,12 @@ func BuildCacheOptions() cache.Options {
 			&corev1.Service{}: {
 				Transform: k8s.StripDownServiceTransformFunc,
 			},
-			&corev1.Namespace{}:           {},
-			&networkingv1.NetworkPolicy{}: {},
-			&v1alpha1.PolicyEndpoint{}:    {},
+			&corev1.Namespace{}:                  {},
+			&networkingv1.NetworkPolicy{}:        {},
+			&v1alpha1.PolicyEndpoint{}:           {},
+			&v1alpha1.ApplicationNetworkPolicy{}: {},
+			&v1alpha1.ClusterNetworkPolicy{}:     {},
+			&v1alpha1.ClusterPolicyEndpoint{}:    {},
 		},
 	}
 	return cacheOptions

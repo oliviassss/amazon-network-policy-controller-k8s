@@ -62,7 +62,7 @@ func (h *enqueueRequestForPolicyEvent) Create(_ context.Context, e event.CreateE
 func (h *enqueueRequestForPolicyEvent) Update(_ context.Context, e event.UpdateEvent, queue workqueue.TypedRateLimitingInterface[reconcile.Request]) {
 	h.logger.V(1).Info("Handling update event", "policy", k8s.NamespacedName(e.ObjectNew))
 
-	// Handle both NetworkPolicy and ApplicationNetworkPolicy
+	// Handle NetworkPolicy, ApplicationNetworkPolicy, and ClusterNetworkPolicy
 	switch oldObj := e.ObjectOld.(type) {
 	case *networking.NetworkPolicy:
 		newPolicy := e.ObjectNew.(*networking.NetworkPolicy)
@@ -72,6 +72,12 @@ func (h *enqueueRequestForPolicyEvent) Update(_ context.Context, e event.UpdateE
 		}
 	case *policyinfo.ApplicationNetworkPolicy:
 		newPolicy := e.ObjectNew.(*policyinfo.ApplicationNetworkPolicy)
+		if !equality.Semantic.DeepEqual(newPolicy.ResourceVersion, oldObj.ResourceVersion) && equality.Semantic.DeepEqual(oldObj.Spec, newPolicy.Spec) &&
+			equality.Semantic.DeepEqual(oldObj.DeletionTimestamp.IsZero(), newPolicy.DeletionTimestamp.IsZero()) {
+			return
+		}
+	case *policyinfo.ClusterNetworkPolicy:
+		newPolicy := e.ObjectNew.(*policyinfo.ClusterNetworkPolicy)
 		if !equality.Semantic.DeepEqual(newPolicy.ResourceVersion, oldObj.ResourceVersion) && equality.Semantic.DeepEqual(oldObj.Spec, newPolicy.Spec) &&
 			equality.Semantic.DeepEqual(oldObj.DeletionTimestamp.IsZero(), newPolicy.DeletionTimestamp.IsZero()) {
 			return

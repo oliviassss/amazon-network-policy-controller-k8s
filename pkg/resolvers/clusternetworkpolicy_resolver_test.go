@@ -266,7 +266,49 @@ func TestClusterNetworkPolicyEndpointsResolver_resolveCNPEgressRules(t *testing.
 	_ = networking.AddToScheme(scheme)
 	_ = policyinfo.AddToScheme(scheme)
 
-	fakeClient := fake.NewClientBuilder().WithScheme(scheme).Build()
+	// Create test namespaces
+	defaultNS := &corev1.Namespace{
+		ObjectMeta: metav1.ObjectMeta{Name: "default"},
+	}
+	prodNS := &corev1.Namespace{
+		ObjectMeta: metav1.ObjectMeta{
+			Name:   "prod-ns",
+			Labels: map[string]string{"env": "prod"},
+		},
+	}
+	devNS := &corev1.Namespace{
+		ObjectMeta: metav1.ObjectMeta{
+			Name:   "dev-ns",
+			Labels: map[string]string{"env": "dev"},
+		},
+	}
+
+	// Create test pods
+	prodPod := &corev1.Pod{
+		ObjectMeta: metav1.ObjectMeta{
+			Name:      "prod-pod",
+			Namespace: "prod-ns",
+			Labels:    map[string]string{"app": "web"},
+		},
+		Status: corev1.PodStatus{
+			PodIP: "10.1.1.1",
+		},
+	}
+	devPod := &corev1.Pod{
+		ObjectMeta: metav1.ObjectMeta{
+			Name:      "dev-pod",
+			Namespace: "dev-ns",
+			Labels:    map[string]string{"app": "api"},
+		},
+		Status: corev1.PodStatus{
+			PodIP: "10.1.1.2",
+		},
+	}
+
+	fakeClient := fake.NewClientBuilder().
+		WithScheme(scheme).
+		WithRuntimeObjects(defaultNS, prodNS, devNS, prodPod, devPod).
+		Build()
 	baseResolver := NewEndpointsResolver(fakeClient, logr.Discard())
 	resolver := &clusterNetworkPolicyEndpointsResolver{
 		k8sClient:    fakeClient,
@@ -305,7 +347,7 @@ func TestClusterNetworkPolicyEndpointsResolver_resolveCNPEgressRules(t *testing.
 				},
 			},
 			targetNamespaces: []string{"ns1", "ns2"},
-			expectedCount:    4, // 2 CIDRs × 2 namespaces
+			expectedCount:    2, // 2 CIDRs (not multiplied by namespaces)
 			expectedCIDRs:    []string{"10.0.0.0/8", "172.16.0.0/12"},
 		},
 		{
@@ -366,11 +408,57 @@ func TestClusterNetworkPolicyEndpointsResolver_resolveCNPEgressRules(t *testing.
 			expectedCIDRs:    []string{"10.0.0.0/8"},
 			expectedDomains:  []string{"example.com"},
 		},
+		{
+			name: "namespace selector all namespaces",
+			cnp: &policyinfo.ClusterNetworkPolicy{
+				ObjectMeta: metav1.ObjectMeta{Name: "test-cnp"},
+				Spec: policyinfo.ClusterNetworkPolicySpec{
+					Subject: policyinfo.ClusterNetworkPolicySubject{
+						Namespaces: &metav1.LabelSelector{},
+					},
+					Egress: []policyinfo.ClusterNetworkPolicyEgressRule{
+						{
+							Name:   "namespace-all",
+							Action: policyinfo.ClusterNetworkPolicyRuleActionAccept,
+							To: []policyinfo.ClusterNetworkPolicyEgressPeer{
+								{Namespaces: &metav1.LabelSelector{}}, // Empty = all namespaces
+							},
+						},
+					},
+				},
+			},
+			targetNamespaces: []string{"ns1"},
+			expectedCount:    2, // 2 pods from all namespaces (prod-pod + dev-pod)
+			expectedCIDRs:    []string{"10.1.1.1", "10.1.1.2"},
+		},
+		{
+			name: "namespace selector specific label",
+			cnp: &policyinfo.ClusterNetworkPolicy{
+				ObjectMeta: metav1.ObjectMeta{Name: "test-cnp"},
+				Spec: policyinfo.ClusterNetworkPolicySpec{
+					Subject: policyinfo.ClusterNetworkPolicySubject{
+						Namespaces: &metav1.LabelSelector{},
+					},
+					Egress: []policyinfo.ClusterNetworkPolicyEgressRule{
+						{
+							Name:   "namespace-prod",
+							Action: policyinfo.ClusterNetworkPolicyRuleActionAccept,
+							To: []policyinfo.ClusterNetworkPolicyEgressPeer{
+								{Namespaces: &metav1.LabelSelector{MatchLabels: map[string]string{"env": "prod"}}},
+							},
+						},
+					},
+				},
+			},
+			targetNamespaces: []string{"ns1"},
+			expectedCount:    1, // 1 pod from prod-ns only
+			expectedCIDRs:    []string{"10.1.1.1"},
+		},
 	}
 
 	for _, tt := range tests {
 		t.Run(tt.name, func(t *testing.T) {
-			result, err := resolver.resolveCNPEgressRules(context.Background(), tt.cnp, tt.targetNamespaces)
+			result, err := resolver.resolveCNPEgressRules(context.Background(), tt.cnp)
 
 			assert.NoError(t, err)
 			assert.Len(t, result, tt.expectedCount)
@@ -410,10 +498,21 @@ func TestClusterNetworkPolicyEndpointsResolver_ResolveClusterNetworkPolicy(t *te
 	// Create test namespaces
 	ns1 := &corev1.Namespace{ObjectMeta: metav1.ObjectMeta{Name: "ns1"}}
 	ns2 := &corev1.Namespace{ObjectMeta: metav1.ObjectMeta{Name: "ns2"}}
+	kubeSystemNs := &corev1.Namespace{ObjectMeta: metav1.ObjectMeta{Name: "kube-system", Labels: map[string]string{"name": "kube-system"}}}
+
+	// Add coredns pods for ingress test
+	coredns1 := &corev1.Pod{
+		ObjectMeta: metav1.ObjectMeta{Name: "coredns-1", Namespace: "kube-system", Labels: map[string]string{"k8s-app": "kube-dns"}},
+		Status:     corev1.PodStatus{PodIP: "192.168.1.1"},
+	}
+	coredns2 := &corev1.Pod{
+		ObjectMeta: metav1.ObjectMeta{Name: "coredns-2", Namespace: "kube-system", Labels: map[string]string{"k8s-app": "kube-dns"}},
+		Status:     corev1.PodStatus{PodIP: "192.168.1.2"},
+	}
 
 	fakeClient := fake.NewClientBuilder().
 		WithScheme(scheme).
-		WithObjects(ns1, ns2).
+		WithObjects(ns1, ns2, kubeSystemNs, coredns1, coredns2).
 		Build()
 
 	// Create real base resolver
@@ -467,7 +566,7 @@ func TestClusterNetworkPolicyEndpointsResolver_ResolveClusterNetworkPolicy(t *te
 			},
 			expectedIngressCount: 0,
 			expectedEgressCount:  3, // 2 from first rule + 1 from second rule
-			expectedPodCount:     0, // Optimized for egress-only
+			expectedPodCount:     2, // coredns pods from kube-system namespace
 		},
 		{
 			name: "egress with FQDN Accept and Pass",
@@ -506,7 +605,7 @@ func TestClusterNetworkPolicyEndpointsResolver_ResolveClusterNetworkPolicy(t *te
 			},
 			expectedIngressCount:  0,
 			expectedEgressCount:   2, // Only Accept and Pass, Deny should be ignored
-			expectedPodCount:      0,
+			expectedPodCount:      2, // coredns pods from kube-system namespace
 			expectedEgressDomains: []string{"example.com", "google.com"},
 		},
 		{
@@ -539,8 +638,43 @@ func TestClusterNetworkPolicyEndpointsResolver_ResolveClusterNetworkPolicy(t *te
 			},
 			expectedIngressCount:  0,
 			expectedEgressCount:   2,
-			expectedPodCount:      0,
+			expectedPodCount:      2, // coredns pods from kube-system namespace
 			expectedEgressDomains: []string{"example.com"},
+		},
+		{
+			name: "ingress port deduplication",
+			cnp: &policyinfo.ClusterNetworkPolicy{
+				ObjectMeta: metav1.ObjectMeta{Name: "test-cnp-ingress-dedup"},
+				Spec: policyinfo.ClusterNetworkPolicySpec{
+					Tier:     policyinfo.AdminTier,
+					Priority: 80,
+					Subject: policyinfo.ClusterNetworkPolicySubject{
+						Pods: &policyinfo.NamespacedPod{
+							NamespaceSelector: metav1.LabelSelector{},
+							PodSelector:       metav1.LabelSelector{},
+						},
+					},
+					Ingress: []policyinfo.ClusterNetworkPolicyIngressRule{
+						{
+							Name:   "dns-rule",
+							Action: policyinfo.ClusterNetworkPolicyRuleActionAccept,
+							From: []policyinfo.ClusterNetworkPolicyIngressPeer{
+								{Pods: &policyinfo.NamespacedPod{
+									NamespaceSelector: metav1.LabelSelector{MatchLabels: map[string]string{"name": "kube-system"}},
+									PodSelector:       metav1.LabelSelector{MatchLabels: map[string]string{"k8s-app": "kube-dns"}},
+								}},
+							},
+							Ports: &[]policyinfo.ClusterNetworkPolicyPort{
+								{PortNumber: &policyinfo.CNPPort{Protocol: corev1.ProtocolTCP, Port: 53}},
+								{PortNumber: &policyinfo.CNPPort{Protocol: corev1.ProtocolUDP, Port: 53}},
+							},
+						},
+					},
+				},
+			},
+			expectedIngressCount: 2, // 2 coredns pods should create 2 ingress rules
+			expectedEgressCount:  0,
+			expectedPodCount:     2, // Only 2 coredns pods in kube-system
 		},
 	}
 
@@ -576,6 +710,19 @@ func TestClusterNetworkPolicyEndpointsResolver_ResolveClusterNetworkPolicy(t *te
 				if key != "" {
 					assert.False(t, seen[key], "found duplicate egress rule: %s", key)
 					seen[key] = true
+				}
+			}
+
+			// For ingress port deduplication test, verify no duplicate ports per CIDR
+			if tt.name == "ingress port deduplication" {
+				cidrPortCount := make(map[string]int)
+				for _, rule := range ingressRules {
+					key := fmt.Sprintf("%s:%s", rule.CIDR, rule.Action)
+					cidrPortCount[key] += len(rule.Ports)
+				}
+				// Each CIDR should have exactly 2 unique ports (TCP:53, UDP:53)
+				for cidr, portCount := range cidrPortCount {
+					assert.Equal(t, 2, portCount, "CIDR %s should have exactly 2 unique ports, got %d", cidr, portCount)
 				}
 			}
 		})
@@ -831,4 +978,132 @@ func TestCNPIngressResolution_SingleRule(t *testing.T) {
 	assert.Equal(t, 1, len(ingressRules))
 	assert.Equal(t, "10.0.2.1", string(ingressRules[0].CIDR))
 	assert.Equal(t, policyinfo.ClusterNetworkPolicyRuleAction("Accept"), ingressRules[0].Action)
+}
+func TestClusterNetworkPolicyEndpointsResolver_resolveNamespacesBySelector(t *testing.T) {
+	tests := []struct {
+		name       string
+		selector   metav1.LabelSelector
+		namespaces []corev1.Namespace
+		expected   []string
+	}{
+		{
+			name:     "empty selector returns all namespaces",
+			selector: metav1.LabelSelector{},
+			namespaces: []corev1.Namespace{
+				{ObjectMeta: metav1.ObjectMeta{Name: "default"}},
+				{ObjectMeta: metav1.ObjectMeta{Name: "kube-system"}},
+				{ObjectMeta: metav1.ObjectMeta{Name: "test-ns"}},
+			},
+			expected: []string{"default", "kube-system", "test-ns"},
+		},
+		{
+			name: "label selector matches specific namespaces",
+			selector: metav1.LabelSelector{
+				MatchLabels: map[string]string{"env": "prod"},
+			},
+			namespaces: []corev1.Namespace{
+				{ObjectMeta: metav1.ObjectMeta{Name: "prod-ns", Labels: map[string]string{"env": "prod"}}},
+				{ObjectMeta: metav1.ObjectMeta{Name: "dev-ns", Labels: map[string]string{"env": "dev"}}},
+				{ObjectMeta: metav1.ObjectMeta{Name: "test-ns", Labels: map[string]string{"env": "test"}}},
+			},
+			expected: []string{"prod-ns"},
+		},
+		{
+			name: "no matching namespaces",
+			selector: metav1.LabelSelector{
+				MatchLabels: map[string]string{"env": "staging"},
+			},
+			namespaces: []corev1.Namespace{
+				{ObjectMeta: metav1.ObjectMeta{Name: "prod-ns", Labels: map[string]string{"env": "prod"}}},
+				{ObjectMeta: metav1.ObjectMeta{Name: "dev-ns", Labels: map[string]string{"env": "dev"}}},
+			},
+			expected: []string{},
+		},
+	}
+
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			scheme := runtime.NewScheme()
+			corev1.AddToScheme(scheme)
+
+			var objects []runtime.Object
+			for _, ns := range tt.namespaces {
+				objects = append(objects, &ns)
+			}
+
+			fakeClient := fake.NewClientBuilder().
+				WithScheme(scheme).
+				WithRuntimeObjects(objects...).
+				Build()
+
+			resolver := &clusterNetworkPolicyEndpointsResolver{
+				k8sClient: fakeClient,
+				logger:    logr.Discard(),
+			}
+
+			result, err := resolver.resolveNamespacesBySelector(context.Background(), tt.selector)
+
+			assert.NoError(t, err)
+			assert.ElementsMatch(t, tt.expected, result)
+		})
+	}
+}
+func TestClusterNetworkPolicyEndpointsResolver_resolveCNPIngressRules(t *testing.T) {
+	scheme := runtime.NewScheme()
+	_ = corev1.AddToScheme(scheme)
+	_ = networking.AddToScheme(scheme)
+	_ = policyinfo.AddToScheme(scheme)
+
+	// Create test namespaces and pods (same as egress test)
+	prodNS := &corev1.Namespace{
+		ObjectMeta: metav1.ObjectMeta{
+			Name:   "prod-ns",
+			Labels: map[string]string{"env": "prod"},
+		},
+	}
+	prodPod := &corev1.Pod{
+		ObjectMeta: metav1.ObjectMeta{
+			Name:      "prod-pod",
+			Namespace: "prod-ns",
+		},
+		Status: corev1.PodStatus{
+			PodIP: "10.1.1.1",
+		},
+	}
+
+	fakeClient := fake.NewClientBuilder().
+		WithScheme(scheme).
+		WithRuntimeObjects(prodNS, prodPod).
+		Build()
+	baseResolver := NewEndpointsResolver(fakeClient, logr.Discard())
+	resolver := &clusterNetworkPolicyEndpointsResolver{
+		k8sClient:    fakeClient,
+		baseResolver: baseResolver,
+		logger:       logr.Discard(),
+	}
+
+	cnp := &policyinfo.ClusterNetworkPolicy{
+		ObjectMeta: metav1.ObjectMeta{Name: "test-cnp"},
+		Spec: policyinfo.ClusterNetworkPolicySpec{
+			Subject: policyinfo.ClusterNetworkPolicySubject{
+				Namespaces: &metav1.LabelSelector{},
+			},
+			Ingress: []policyinfo.ClusterNetworkPolicyIngressRule{
+				{
+					Name:   "ingress-rule",
+					Action: policyinfo.ClusterNetworkPolicyRuleActionAccept,
+					From: []policyinfo.ClusterNetworkPolicyIngressPeer{
+						{Namespaces: &metav1.LabelSelector{MatchLabels: map[string]string{"env": "prod"}}},
+					},
+				},
+			},
+		},
+	}
+
+	result, err := resolver.resolveCNPIngressRules(context.Background(), cnp)
+
+	assert.NoError(t, err)
+	assert.Len(t, result, 1) // 1 pod from prod-ns
+	assert.Equal(t, "10.1.1.1", string(result[0].CIDR))
+	assert.Equal(t, policyinfo.ClusterNetworkPolicyRuleActionAccept, result[0].Action)
 }

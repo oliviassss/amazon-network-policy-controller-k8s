@@ -112,7 +112,7 @@ type ClusterNetworkPolicyIngressRule struct {
 	Ports *[]ClusterNetworkPolicyPort `json:"ports,omitempty"`
 }
 
-// +kubebuilder:validation:XValidation:rule="!(self.action == 'Deny' && self.to.exists(peer, has(peer.domainNames)))",message="domainNames peer cannot be used with Deny action, only Accept and Pass actions are supported for domainNames"
+// +kubebuilder:validation:XValidation:rule="!(self.action != 'Accept' && self.to.exists(peer, has(peer.domainNames)))",message="domainNames peer can only be used with Accept action"
 type ClusterNetworkPolicyEgressRule struct {
 	// Name is an identifier for this rule, that may be no more than
 	// 100 characters in length. This field should be used by the implementation

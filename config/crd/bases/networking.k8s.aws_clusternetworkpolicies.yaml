@@ -350,9 +350,8 @@ spec:
                   - to
                   type: object
                   x-kubernetes-validations:
-                  - message: domainNames peer cannot be used with Deny action, only
-                      Accept and Pass actions are supported for domainNames
-                    rule: '!(self.action == ''Deny'' && self.to.exists(peer, has(peer.domainNames)))'
+                  - message: domainNames peer can only be used with Accept action
+                    rule: '!(self.action != ''Accept'' && self.to.exists(peer, has(peer.domainNames)))'
                 maxItems: 100
                 type: array
               ingress:

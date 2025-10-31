@@ -249,13 +249,8 @@ func TestClusterNetworkPolicyEndpointsResolver_convertSingleCNPEgressRuleToNP(t 
 			}
 			assert.ElementsMatch(t, tt.expectedCIDRs, foundCIDRs, "CIDR mismatch")
 
-			// Verify pod selector is set correctly based on CNP subject
-			if tt.cnp.Spec.Subject.Pods != nil {
-				assert.Equal(t, tt.cnp.Spec.Subject.Pods.PodSelector, np.Spec.PodSelector)
-			} else {
-				// Should be empty selector for namespace-based subjects
-				assert.Equal(t, metav1.LabelSelector{}, np.Spec.PodSelector)
-			}
+			// Verify pod selector is empty since temp NP is only for peer resolution
+			assert.Equal(t, metav1.LabelSelector{}, np.Spec.PodSelector)
 		})
 	}
 }

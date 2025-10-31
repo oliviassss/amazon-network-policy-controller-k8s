@@ -206,56 +206,6 @@ func (r *clusterNetworkPolicyEndpointsResolver) resolveNamespacesBySelector(ctx 
 	return namespaces, nil
 }
 
-func (r *clusterNetworkPolicyEndpointsResolver) convertCNPToNetworkPolicy(cnp *policyinfo.ClusterNetworkPolicy, namespace string) *networking.NetworkPolicy {
-	// Convert CNP ingress rules to NP ingress rules
-	var ingressRules []networking.NetworkPolicyIngressRule
-	for _, rule := range cnp.Spec.Ingress {
-		npRule := networking.NetworkPolicyIngressRule{
-			From: r.convertCNPIngressPeersToNPPeers(rule.From),
-		}
-		// Convert ports if present
-		if rule.Ports != nil {
-			npRule.Ports = r.convertCNPPortsToNPPorts(*rule.Ports)
-		}
-		ingressRules = append(ingressRules, npRule)
-	}
-
-	// Determine pod selector based on CNP subject
-	var podSelector metav1.LabelSelector
-	if cnp.Spec.Subject.Pods != nil {
-		podSelector = cnp.Spec.Subject.Pods.PodSelector
-	}
-	// If subject.Namespaces is used, select all pods (empty selector)
-
-	return &networking.NetworkPolicy{
-		ObjectMeta: metav1.ObjectMeta{
-			Name:      cnp.Name,
-			Namespace: namespace,
-		},
-		Spec: networking.NetworkPolicySpec{
-			PodSelector: podSelector,
-			Ingress:     ingressRules,
-			// Egress will be handled separately for domainNames
-		},
-	}
-}
-
-func (r *clusterNetworkPolicyEndpointsResolver) convertCNPIngressPeersToNPPeers(cnpPeers []policyinfo.ClusterNetworkPolicyIngressPeer) []networking.NetworkPolicyPeer {
-	var npPeers []networking.NetworkPolicyPeer
-	for _, peer := range cnpPeers {
-		npPeer := networking.NetworkPolicyPeer{}
-		if peer.Namespaces != nil {
-			npPeer.NamespaceSelector = peer.Namespaces
-		}
-		if peer.Pods != nil {
-			npPeer.NamespaceSelector = &peer.Pods.NamespaceSelector
-			npPeer.PodSelector = &peer.Pods.PodSelector
-		}
-		npPeers = append(npPeers, npPeer)
-	}
-	return npPeers
-}
-
 func (r *clusterNetworkPolicyEndpointsResolver) convertCNPPortsToNPPorts(cnpPorts []policyinfo.ClusterNetworkPolicyPort) []networking.NetworkPolicyPort {
 	var npPorts []networking.NetworkPolicyPort
 	for _, cnpPort := range cnpPorts {
@@ -395,20 +345,13 @@ func (r *clusterNetworkPolicyEndpointsResolver) convertSingleCNPIngressRuleToNP(
 		ingressRule.Ports = r.convertCNPPortsToNPPorts(*rule.Ports)
 	}
 
-	// Determine pod selector based on CNP subject
-	var podSelector metav1.LabelSelector
-	if cnp.Spec.Subject.Pods != nil {
-		podSelector = cnp.Spec.Subject.Pods.PodSelector
-	}
-
 	return &networking.NetworkPolicy{
 		ObjectMeta: metav1.ObjectMeta{
 			Name:      cnp.Name,
 			Namespace: namespace,
 		},
 		Spec: networking.NetworkPolicySpec{
-			PodSelector: podSelector,
-			Ingress:     []networking.NetworkPolicyIngressRule{ingressRule},
+			Ingress: []networking.NetworkPolicyIngressRule{ingressRule},
 		},
 	}
 }
@@ -448,20 +391,13 @@ func (r *clusterNetworkPolicyEndpointsResolver) convertSingleCNPEgressRuleToNP(c
 		egressRule.Ports = r.convertCNPPortsToNPPorts(*rule.Ports)
 	}
 
-	// Determine pod selector based on CNP subject
-	var podSelector metav1.LabelSelector
-	if cnp.Spec.Subject.Pods != nil {
-		podSelector = cnp.Spec.Subject.Pods.PodSelector
-	}
-
 	return &networking.NetworkPolicy{
 		ObjectMeta: metav1.ObjectMeta{
 			Name:      cnp.Name,
 			Namespace: namespace,
 		},
 		Spec: networking.NetworkPolicySpec{
-			PodSelector: podSelector,
-			Egress:      []networking.NetworkPolicyEgressRule{egressRule},
+			Egress: []networking.NetworkPolicyEgressRule{egressRule},
 		},
 	}
 }

@@ -1,0 +1,31 @@
+apiVersion: networking.k8s.aws/v1alpha1
+kind: ClusterNetworkPolicy
+metadata:
+  name: same-namespace-policy
+spec:
+  egress:
+  - action: Accept
+    name: allow-same-ns-egress
+    to:
+    - pods:
+        namespaceSelector:
+          matchLabels:
+            kubernetes.io/metadata.name: kube-system
+        podSelector: {}
+  ingress:
+  - action: Accept
+    from:
+    - pods:
+        namespaceSelector:
+          matchLabels:
+            kubernetes.io/metadata.name: kube-system
+        podSelector: {}
+    name: allow-same-ns-ingress
+  priority: 20
+  subject:
+    pods:
+      namespaceSelector:
+        matchLabels:
+          kubernetes.io/metadata.name: kube-system
+      podSelector: {}
+  tier: Admin

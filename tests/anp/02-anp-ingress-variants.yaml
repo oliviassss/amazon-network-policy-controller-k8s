@@ -1,0 +1,37 @@
+apiVersion: networking.k8s.aws/v1alpha1
+kind: ApplicationNetworkPolicy
+metadata:
+  name: frontend-ingress-variants
+  namespace: staging
+spec:
+  podSelector:
+    matchLabels:
+      component: frontend
+  policyTypes:
+  - Ingress
+  ingress:
+  # Rule with podSelector only
+  - from:
+    - podSelector:
+        matchLabels:
+          component: backend
+    ports:
+    - protocol: TCP
+      port: 80
+  # Rule with namespaceSelector only
+  - from:
+    - namespaceSelector:
+        matchLabels:
+          environment: production
+    ports:
+    - protocol: TCP
+      port: 443
+  # Rule with ipBlock only
+  - from:
+    - ipBlock:
+        cidr: 10.0.0.0/16
+        except:
+        - 10.0.1.0/24
+    ports:
+    - protocol: TCP
+      port: 8080

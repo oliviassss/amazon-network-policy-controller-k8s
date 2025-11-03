@@ -357,11 +357,25 @@ func Test_policyEndpointsManager_processExistingClusterPolicyEndpoints_preserveM
 	}
 
 	// Process existing CPEs
+	testMetadata := ClusterPolicyMetadata{
+		Name:     "test-cnp",
+		UID:      "test-uid",
+		Tier:     "Admin",
+		Priority: 100,
+		Subject: policyinfo.ClusterNetworkPolicySubject{
+			Pods: &policyinfo.NamespacedPod{
+				NamespaceSelector: metav1.LabelSelector{},
+				PodSelector:       metav1.LabelSelector{},
+			},
+		},
+	}
+
 	ingressMap, egressMap, podSet, modifiedCPEs, potentialDeletes := manager.processExistingClusterPolicyEndpoints(
 		[]policyinfo.ClusterPolicyEndpoint{existingCPE},
 		newIngressRules,
 		newEgressRules,
 		newPodEndpoints,
+		testMetadata,
 	)
 
 	// Verify results
@@ -389,4 +403,115 @@ func Test_policyEndpointsManager_processExistingClusterPolicyEndpoints_preserveM
 
 	assert.Len(t, podSet, 1, "Should have one remaining pod endpoint in set")
 	assert.True(t, podSet.Has(policyinfo.PodEndpoint{Name: "pod2", Namespace: "ns2", PodIP: "10.0.0.2", HostIP: "10.0.1.2"}))
+}
+func Test_policyEndpointsManager_processExistingClusterPolicyEndpoints_updateTierAndPriority(t *testing.T) {
+	manager := &policyEndpointsManager{
+		endpointChunkSize: 100,
+	}
+
+	// Create existing CPE with old tier and priority
+	existingCPE := policyinfo.ClusterPolicyEndpoint{
+		ObjectMeta: metav1.ObjectMeta{
+			Name: "test-cpe-1",
+		},
+		Spec: policyinfo.ClusterPolicyEndpointSpec{
+			Tier:     policyinfo.Tier("System"), // Old tier
+			Priority: 50,                        // Old priority
+			Ingress: []policyinfo.ClusterEndpointInfo{
+				{CIDR: "10.0.0.0/8", Action: "Accept"},
+			},
+		},
+	}
+
+	// New metadata with updated tier and priority
+	newMetadata := ClusterPolicyMetadata{
+		Name:     "test-cnp",
+		UID:      "test-uid",
+		Tier:     "Admin", // New tier
+		Priority: 100,     // New priority
+		Subject: policyinfo.ClusterNetworkPolicySubject{
+			Pods: &policyinfo.NamespacedPod{
+				NamespaceSelector: metav1.LabelSelector{},
+				PodSelector:       metav1.LabelSelector{},
+			},
+		},
+	}
+
+	// Same ingress rules (no change in rules)
+	ingressRules := []policyinfo.ClusterEndpointInfo{
+		{CIDR: "10.0.0.0/8", Action: "Accept"},
+	}
+
+	_, _, _, modifiedCPEs, _ := manager.processExistingClusterPolicyEndpoints(
+		[]policyinfo.ClusterPolicyEndpoint{existingCPE},
+		ingressRules,
+		[]policyinfo.ClusterEndpointInfo{},
+		[]policyinfo.PodEndpoint{},
+		newMetadata,
+	)
+
+	// Verify that CPE was marked as modified due to tier/priority change
+	assert.Len(t, modifiedCPEs, 1, "Should have one modified CPE")
+	assert.Equal(t, policyinfo.Tier("Admin"), modifiedCPEs[0].Spec.Tier, "Tier should be updated")
+	assert.Equal(t, int32(100), modifiedCPEs[0].Spec.Priority, "Priority should be updated")
+}
+func Test_policyEndpointsManager_processExistingClusterPolicyEndpoints_updateSubject(t *testing.T) {
+	manager := &policyEndpointsManager{
+		endpointChunkSize: 100,
+	}
+
+	// Create existing CPE with old subject
+	existingCPE := policyinfo.ClusterPolicyEndpoint{
+		ObjectMeta: metav1.ObjectMeta{
+			Name: "test-cpe-1",
+		},
+		Spec: policyinfo.ClusterPolicyEndpointSpec{
+			Tier:     policyinfo.Tier("Admin"),
+			Priority: 100,
+			Subject: policyinfo.ClusterNetworkPolicySubject{
+				Pods: &policyinfo.NamespacedPod{
+					NamespaceSelector: metav1.LabelSelector{
+						MatchLabels: map[string]string{"kubernetes.io/metadata.name": "kube-system"},
+					},
+					PodSelector: metav1.LabelSelector{},
+				},
+			},
+			Ingress: []policyinfo.ClusterEndpointInfo{
+				{CIDR: "10.0.0.0/8", Action: "Accept"},
+			},
+		},
+	}
+
+	// New metadata with updated subject (all namespaces instead of just kube-system)
+	newMetadata := ClusterPolicyMetadata{
+		Name:     "test-cnp",
+		UID:      "test-uid",
+		Tier:     "Admin",
+		Priority: 100,
+		Subject: policyinfo.ClusterNetworkPolicySubject{
+			Pods: &policyinfo.NamespacedPod{
+				NamespaceSelector: metav1.LabelSelector{}, // Empty = all namespaces
+				PodSelector:       metav1.LabelSelector{},
+			},
+		},
+	}
+
+	// Same ingress rules (no change in rules)
+	ingressRules := []policyinfo.ClusterEndpointInfo{
+		{CIDR: "10.0.0.0/8", Action: "Accept"},
+	}
+
+	_, _, _, modifiedCPEs, _ := manager.processExistingClusterPolicyEndpoints(
+		[]policyinfo.ClusterPolicyEndpoint{existingCPE},
+		ingressRules,
+		[]policyinfo.ClusterEndpointInfo{},
+		[]policyinfo.PodEndpoint{},
+		newMetadata,
+	)
+
+	// Verify that CPE was marked as modified due to subject change
+	assert.Len(t, modifiedCPEs, 1, "Should have one modified CPE")
+	assert.Equal(t, policyinfo.Tier("Admin"), modifiedCPEs[0].Spec.Tier, "Tier should be updated")
+	assert.Equal(t, int32(100), modifiedCPEs[0].Spec.Priority, "Priority should be updated")
+	assert.Empty(t, modifiedCPEs[0].Spec.Subject.Pods.NamespaceSelector.MatchLabels, "Subject should be updated to all namespaces")
 }

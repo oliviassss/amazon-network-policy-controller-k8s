@@ -6,6 +6,7 @@ import (
 
 	"github.com/samber/lo"
 	"golang.org/x/exp/maps"
+	"k8s.io/apimachinery/pkg/api/equality"
 	metav1 "k8s.io/apimachinery/pkg/apis/meta/v1"
 	"k8s.io/apimachinery/pkg/types"
 	"k8s.io/apimachinery/pkg/util/sets"
@@ -19,6 +20,7 @@ type ClusterPolicyMetadata struct {
 	UID      types.UID
 	Tier     policyinfo.Tier
 	Priority int32
+	Subject  policyinfo.ClusterNetworkPolicySubject
 }
 
 // processExistingClusterPolicyEndpoints processes existing CPE objects and converts them to maps for efficient chunking
@@ -26,7 +28,8 @@ func (m *policyEndpointsManager) processExistingClusterPolicyEndpoints(
 	existingCPEs []policyinfo.ClusterPolicyEndpoint,
 	ingressRules []policyinfo.ClusterEndpointInfo,
 	egressRules []policyinfo.ClusterEndpointInfo,
-	podSelectorEndpoints []policyinfo.PodEndpoint) (
+	podSelectorEndpoints []policyinfo.PodEndpoint,
+	metadata ClusterPolicyMetadata) (
 	map[string]policyinfo.ClusterEndpointInfo,
 	map[string]policyinfo.ClusterEndpointInfo,
 	sets.Set[policyinfo.PodEndpoint],
@@ -82,6 +85,16 @@ func (m *policyEndpointsManager) processExistingClusterPolicyEndpoints(
 			}
 		}
 
+		// Check if tier, priority, or subject changed (subject change will trigger pod endpoint changes)
+		tierChanged := existingCPEs[i].Spec.Tier != metadata.Tier
+		priorityChanged := existingCPEs[i].Spec.Priority != metadata.Priority
+		subjectChanged := !equality.Semantic.DeepEqual(existingCPEs[i].Spec.Subject, metadata.Subject)
+
+		// Update tier, priority, and subject to match current CNP spec
+		existingCPEs[i].Spec.Tier = metadata.Tier
+		existingCPEs[i].Spec.Priority = metadata.Priority
+		existingCPEs[i].Spec.Subject = metadata.Subject
+
 		// Determine if CPE should be modified or potentially deleted
 		if len(ingEndpointList) == 0 && len(egEndpointList) == 0 && len(podSelectorEndpointList) == 0 {
 			// CPE has no matching rules - mark for potential deletion
@@ -91,7 +104,8 @@ func (m *policyEndpointsManager) processExistingClusterPolicyEndpoints(
 			potentialDeletes = append(potentialDeletes, existingCPEs[i])
 		} else if len(existingCPEs[i].Spec.Ingress) != len(ingEndpointList) ||
 			len(existingCPEs[i].Spec.Egress) != len(egEndpointList) ||
-			len(existingCPEs[i].Spec.PodSelectorEndpoints) != len(podSelectorEndpointList) {
+			len(existingCPEs[i].Spec.PodSelectorEndpoints) != len(podSelectorEndpointList) ||
+			tierChanged || priorityChanged || subjectChanged {
 			// CPE has changed - update it
 			existingCPEs[i].Spec.Ingress = ingEndpointList
 			existingCPEs[i].Spec.Egress = egEndpointList
@@ -246,6 +260,7 @@ func (m *policyEndpointsManager) newClusterPolicyEndpoint(metadata ClusterPolicy
 			},
 			Tier:                 metadata.Tier,
 			Priority:             metadata.Priority,
+			Subject:              metadata.Subject,
 			PodSelectorEndpoints: podSelectorEndpoints,
 			Ingress:              ingressRules,
 			Egress:               egressRules,

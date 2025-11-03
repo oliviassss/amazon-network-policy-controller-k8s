@@ -614,6 +614,7 @@ func (in *ClusterPolicyEndpointList) DeepCopyObject() runtime.Object {
 func (in *ClusterPolicyEndpointSpec) DeepCopyInto(out *ClusterPolicyEndpointSpec) {
 	*out = *in
 	out.PolicyRef = in.PolicyRef
+	in.Subject.DeepCopyInto(&out.Subject)
 	if in.PodSelectorEndpoints != nil {
 		in, out := &in.PodSelectorEndpoints, &out.PodSelectorEndpoints
 		*out = make([]PodEndpoint, len(*in))

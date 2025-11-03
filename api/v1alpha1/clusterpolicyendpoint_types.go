@@ -52,6 +52,9 @@ type ClusterPolicyEndpointSpec struct {
 	// Priority from the CNP
 	Priority int32 `json:"priority"`
 
+	// Subject from the CNP
+	Subject ClusterNetworkPolicySubject `json:"subject"`
+
 	// PodSelectorEndpoints contains information about the pods
 	// matching the policy across all namespaces
 	PodSelectorEndpoints []PodEndpoint `json:"podSelectorEndpoints,omitempty"`

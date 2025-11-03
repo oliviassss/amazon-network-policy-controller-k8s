@@ -740,23 +740,24 @@ func (m *policyEndpointsManager) CleanupCNP(ctx context.Context, cnp *policyinfo
 }
 
 func (m *policyEndpointsManager) computeClusterPolicyEndpoints(cnp *policyinfo.ClusterNetworkPolicy, existingCPEs []policyinfo.ClusterPolicyEndpoint, ingressRules []policyinfo.ClusterEndpointInfo, egressRules []policyinfo.ClusterEndpointInfo, podSelectorEndpoints []policyinfo.PodEndpoint) ([]policyinfo.ClusterPolicyEndpoint, []policyinfo.ClusterPolicyEndpoint, []policyinfo.ClusterPolicyEndpoint, error) {
-	// Process existing CPEs and convert rules to maps for chunking
-	ingressEndpointsMap, egressEndpointsMap, podSelectorEndpointSet, modifiedCPEs, potentialDeletes := m.processExistingClusterPolicyEndpoints(
-		existingCPEs, ingressRules, egressRules, podSelectorEndpoints,
-	)
-
-	doNotDelete := sets.Set[types.NamespacedName]{}
-	var createCPEs []policyinfo.ClusterPolicyEndpoint
-	var updateCPEs []policyinfo.ClusterPolicyEndpoint
-	var deleteCPEs []policyinfo.ClusterPolicyEndpoint
-
 	// Create metadata for ClusterNetworkPolicy
 	cnpMetadata := ClusterPolicyMetadata{
 		Name:     cnp.Name,
 		UID:      cnp.UID,
 		Tier:     cnp.Spec.Tier,
 		Priority: cnp.Spec.Priority,
+		Subject:  cnp.Spec.Subject,
 	}
+
+	// Process existing CPEs and convert rules to maps for chunking
+	ingressEndpointsMap, egressEndpointsMap, podSelectorEndpointSet, modifiedCPEs, potentialDeletes := m.processExistingClusterPolicyEndpoints(
+		existingCPEs, ingressRules, egressRules, podSelectorEndpoints, cnpMetadata,
+	)
+
+	doNotDelete := sets.Set[types.NamespacedName]{}
+	var createCPEs []policyinfo.ClusterPolicyEndpoint
+	var updateCPEs []policyinfo.ClusterPolicyEndpoint
+	var deleteCPEs []policyinfo.ClusterPolicyEndpoint
 
 	// Use chunking logic (same pattern as NP/ANP)
 	createCPEs, doNotDeleteIngress := m.packingClusterIngressRules(cnpMetadata, ingressEndpointsMap, createCPEs, modifiedCPEs, potentialDeletes)

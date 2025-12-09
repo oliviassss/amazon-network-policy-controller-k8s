@@ -34,6 +34,7 @@ import (
 	"k8s.io/client-go/rest"
 )
 
+// the crds.yaml is sourcing from config/crd/bases/*.yaml
 //go:embed crds.yaml
 var crdsYAML string
 var desiredCRDs []*v1.CustomResourceDefinition

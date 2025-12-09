@@ -82,8 +82,7 @@ test: manifests generate fmt vet envtest ## Run tests.
 ##@ Build
 .PHONY: prepare-embed
 prepare-embed: ## Prepare files for go:embed.
-	cp charts/amazon-network-policy-controller-k8s/crds/crds.yaml pkg/crd/crds.yaml
-	sed -i 's/controller-gen.kubebuilder.io\/version: v[0-9]\+\.[0-9]\+\.[0-9]\+/controller-gen.kubebuilder.io\/version: v0.11.3/' pkg/crd/crds.yaml
+	cat config/crd/bases/*.yaml > pkg/crd/crds.yaml
 
 
 .PHONY: build

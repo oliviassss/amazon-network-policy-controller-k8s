@@ -12,10 +12,10 @@ metadata:
 roleRef:
   apiGroup: rbac.authorization.k8s.io
   kind: ClusterRole
-  name: amazon-network-policy-controller-k8s
+  name: controller-k8s
 subjects:
 - kind: ServiceAccount
-  name: amazon-network-policy-controller-k8s
+  name: controller-k8s
 ---
 apiVersion: rbac.authorization.k8s.io/v1
 kind: RoleBinding
@@ -31,7 +31,7 @@ metadata:
 roleRef:
   apiGroup: rbac.authorization.k8s.io
   kind: Role
-  name: amazon-network-policy-controller-k8s
+  name: controller-k8s
 subjects:
   - kind: ServiceAccount
-    name: amazon-network-policy-controller-k8s
+    name: controller-k8s

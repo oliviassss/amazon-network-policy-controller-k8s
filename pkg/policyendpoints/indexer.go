@@ -6,11 +6,18 @@ import (
 )
 
 const (
-	IndexKeyPolicyReferenceName = "spec.policyRef.name"
+	IndexKeyPolicyReferenceName        = "spec.policyRef.name"
+	IndexKeyClusterPolicyReferenceName = "spec.policyRef.name"
 )
 
 // IndexFunctionPolicyReferenceName is IndexFunc for "PolicyReference" index.
 func IndexFunctionPolicyReferenceName(obj client.Object) []string {
 	policyEndpoint := obj.(*policyinfo.PolicyEndpoint)
 	return []string{policyEndpoint.Spec.PolicyRef.Name}
+}
+
+// IndexFunctionClusterPolicyReferenceName is IndexFunc for "ClusterPolicyReference" index.
+func IndexFunctionClusterPolicyReferenceName(obj client.Object) []string {
+	clusterPolicyEndpoint := obj.(*policyinfo.ClusterPolicyEndpoint)
+	return []string{clusterPolicyEndpoint.Spec.PolicyRef.Name}
 }

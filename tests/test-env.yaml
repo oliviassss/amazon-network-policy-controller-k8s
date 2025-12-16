@@ -1,0 +1,171 @@
+---
+apiVersion: v1
+kind: Namespace
+metadata:
+  name: production
+  labels:
+    environment: production
+    security-level: restricted
+    trust-level: high
+    data-tier: persistent
+    tier: application
+---
+apiVersion: v1
+kind: Namespace
+metadata:
+  name: staging
+  labels:
+    environment: staging
+    security-level: restricted
+    trust-level: high
+---
+apiVersion: v1
+kind: Namespace
+metadata:
+  name: development
+  labels:
+    environment: dev
+    trust-level: low
+---
+apiVersion: v1
+kind: Namespace
+metadata:
+  name: shared-services
+  labels:
+    service-type: shared
+    monitoring: enabled
+    name: monitoring
+---
+apiVersion: v1
+kind: Namespace
+metadata:
+  name: ingress-system
+  labels:
+    name: ingress-system
+---
+apiVersion: v1
+kind: Pod
+metadata:
+  name: web-server-1
+  namespace: production
+  labels:
+    app: web-server
+    component: frontend
+    tier: web
+    role: database
+spec:
+  containers:
+  - name: nginx
+    image: nginx:alpine
+    ports:
+    - containerPort: 80
+    - containerPort: 443
+    - containerPort: 8080
+---
+apiVersion: v1
+kind: Pod
+metadata:
+  name: backend-api-1
+  namespace: production
+  labels:
+    component: backend
+    tier: api
+spec:
+  containers:
+  - name: api-server
+    image: public.ecr.aws/docker/library/busybox:latest
+    command: ["sleep", "3600"]
+    ports:
+    - containerPort: 3000
+---
+apiVersion: v1
+kind: Pod
+metadata:
+  name: database-postgres
+  namespace: production
+  labels:
+    component: database
+    tier: data
+    role: database
+spec:
+  containers:
+  - name: postgres
+    image: public.ecr.aws/docker/library/busybox:latest
+    command: ["sleep", "3600"]
+    ports:
+    - containerPort: 5432
+---
+apiVersion: v1
+kind: Pod
+metadata:
+  name: cache-redis
+  namespace: production
+  labels:
+    component: redis
+    tier: cache
+spec:
+  containers:
+  - name: redis
+    image: redis:alpine
+    ports:
+    - containerPort: 6379
+---
+apiVersion: v1
+kind: Pod
+metadata:
+  name: frontend-staging
+  namespace: staging
+  labels:
+    component: frontend
+spec:
+  containers:
+  - name: nginx
+    image: nginx:alpine
+    ports:
+    - containerPort: 80
+---
+apiVersion: v1
+kind: Pod
+metadata:
+  name: backend-staging
+  namespace: staging
+  labels:
+    component: backend
+spec:
+  containers:
+  - name: nginx
+    image: nginx:alpine
+    ports:
+    - containerPort: 80
+---
+apiVersion: v1
+kind: Pod
+metadata:
+  name: monitoring-prometheus
+  namespace: shared-services
+  labels:
+    app: prometheus
+    component: monitoring
+spec:
+  containers:
+  - name: prometheus
+    image: prom/prometheus
+    ports:
+    - containerPort: 9090
+---
+apiVersion: v1
+kind: Pod
+metadata:
+  name: nginx-ingress
+  namespace: ingress-system
+  labels:
+    app: nginx-ingress
+    component: ingress
+spec:
+  containers:
+  - name: nginx-ingress
+    image: public.ecr.aws/docker/library/busybox:latest
+    command: ["sleep", "3600"]
+    ports:
+    - containerPort: 80
+    - containerPort: 443

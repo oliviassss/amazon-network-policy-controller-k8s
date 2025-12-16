@@ -76,14 +76,14 @@ vet: ## Run go vet against code.
 	go vet ./...
 
 .PHONY: test
-test: manifests generate fmt vet envtest ## Run tests.
+test: manifests generate fmt vet envtest prepare-embed ## Run tests.
 	KUBEBUILDER_ASSETS="$(shell $(ENVTEST) use $(ENVTEST_K8S_VERSION) --bin-dir $(LOCALBIN) -p path)" go test ./... -coverprofile cover.out
 
 ##@ Build
 .PHONY: prepare-embed
 prepare-embed: ## Prepare files for go:embed.
-	cp charts/amazon-network-policy-controller-k8s/crds/crds.yaml pkg/crd/crds.yaml
-	sed -i 's/controller-gen.kubebuilder.io\/version: v[0-9]\+\.[0-9]\+\.[0-9]\+/controller-gen.kubebuilder.io\/version: v0.11.3/' pkg/crd/crds.yaml
+	cat config/crd/bases/*.yaml > pkg/crd/crds.yaml
+	sed -i '1834s/v0\.17\.0/v0.11.3/' pkg/crd/crds.yaml
 
 
 .PHONY: build
@@ -144,7 +144,7 @@ MOCKGEN ?= $(LOCALBIN)/mockgen
 
 ## Tool Versions
 KUSTOMIZE_VERSION ?= v5.4.3
-CONTROLLER_TOOLS_VERSION ?= v0.16.3
+CONTROLLER_TOOLS_VERSION ?= v0.17.0
 
 KUSTOMIZE_INSTALL_SCRIPT ?= "https://raw.githubusercontent.com/kubernetes-sigs/kustomize/master/hack/install_kustomize.sh"
 .PHONY: kustomize

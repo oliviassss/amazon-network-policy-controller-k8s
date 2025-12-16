@@ -1,0 +1,45 @@
+apiVersion: networking.k8s.aws/v1alpha1
+kind: ApplicationNetworkPolicy
+metadata:
+  name: mixed-anp
+  namespace: default
+spec:
+  podSelector:
+    matchLabels:
+      role: frontend
+  policyTypes:
+  - Egress
+  egress:
+  # Rule with domainNames only
+  - to:
+    - domainNames:
+      - "github.com"
+      - "registry-1.docker.io"
+    ports:
+    - protocol: TCP
+      port: 443
+    - protocol: TCP
+      port: 80
+  # Rule with podSelector only
+  - to:
+    - podSelector:
+        matchLabels:
+          role: db
+    ports:
+    - protocol: TCP
+      port: 6379
+  # Rule with ipBlock only
+  - to:
+    - ipBlock:
+        cidr: 10.0.0.0/24
+    ports:
+    - protocol: TCP
+      port: 443
+  # Rule with namespaceSelector only
+  - to:
+    - namespaceSelector:
+        matchLabels:
+          env: production
+    ports:
+    - protocol: TCP
+      port: 8080

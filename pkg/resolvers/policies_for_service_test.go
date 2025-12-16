@@ -16,6 +16,7 @@ import (
 	"sigs.k8s.io/controller-runtime/pkg/client"
 	"sigs.k8s.io/controller-runtime/pkg/log"
 
+	policyinfo "github.com/aws/amazon-network-policy-controller-k8s/api/v1alpha1"
 	corev1 "k8s.io/api/core/v1"
 	"k8s.io/apimachinery/pkg/types"
 )
@@ -726,6 +727,207 @@ func TestPolicyReferenceResolver_isServiceMatchLabelSelector(t *testing.T) {
 			}
 			got := policyReferenceResolver.isServiceMatchLabelSelector(context.Background(), tt.svc, tt.peer, tt.namespace)
 			assert.Equal(t, tt.want, got)
+		})
+	}
+}
+
+func TestPolicyReferenceResolver_GetReferredClusterPoliciesForService(t *testing.T) {
+	ctrl := gomock.NewController(t)
+	defer ctrl.Finish()
+
+	mockClient := mock_client.NewMockClient(ctrl)
+
+	cnp := &policyinfo.ClusterNetworkPolicy{
+		ObjectMeta: metav1.ObjectMeta{Name: "test-cnp"},
+		Spec: policyinfo.ClusterNetworkPolicySpec{
+			Subject: policyinfo.ClusterNetworkPolicySubject{
+				Namespaces: &metav1.LabelSelector{},
+			},
+		},
+	}
+
+	cnpList := &policyinfo.ClusterNetworkPolicyList{
+		Items: []policyinfo.ClusterNetworkPolicy{*cnp},
+	}
+
+	mockClient.EXPECT().List(gomock.Any(), gomock.Any()).DoAndReturn(
+		func(ctx context.Context, list client.ObjectList, opts ...client.ListOption) error {
+			list.(*policyinfo.ClusterNetworkPolicyList).Items = cnpList.Items
+			return nil
+		})
+
+	resolver := &defaultPolicyReferenceResolver{
+		k8sClient: mockClient,
+		logger:    logr.New(&log.NullLogSink{}),
+	}
+
+	svc := &corev1.Service{
+		ObjectMeta: metav1.ObjectMeta{
+			Name:      "test-service",
+			Namespace: "default",
+		},
+	}
+
+	policies, err := resolver.GetReferredClusterPoliciesForService(context.Background(), svc, nil)
+
+	assert.NoError(t, err)
+	assert.Len(t, policies, 1)
+	assert.Equal(t, "test-cnp", policies[0].Name)
+}
+func TestPolicyReferenceResolver_GetReferredApplicationNetworkPoliciesForService(t *testing.T) {
+	type policyGetCall struct {
+		policyRef types.NamespacedName
+		policy    *policyinfo.ApplicationNetworkPolicy
+		err       error
+	}
+
+	tests := []struct {
+		name                      string
+		trackedNamespacedPolicies []types.NamespacedName
+		trackedEgressPolicies     []types.NamespacedName
+		policyGetCalls            []policyGetCall
+		service                   *corev1.Service
+		serviceOld                *corev1.Service
+		want                      []policyinfo.ApplicationNetworkPolicy
+		wantErr                   string
+	}{
+		{
+			name: "no tracked policies",
+			service: &corev1.Service{
+				ObjectMeta: metav1.ObjectMeta{Name: "svc", Namespace: "default"},
+				Spec: corev1.ServiceSpec{
+					ClusterIP: "10.100.187.163",
+					Selector:  map[string]string{"app": "test"},
+				},
+			},
+		},
+		{
+			name: "tracked policies match service selector",
+			service: &corev1.Service{
+				ObjectMeta: metav1.ObjectMeta{Name: "svc", Namespace: "default"},
+				Spec: corev1.ServiceSpec{
+					ClusterIP: "10.100.187.163",
+					Selector:  map[string]string{"app": "test"},
+				},
+			},
+			trackedEgressPolicies: []types.NamespacedName{
+				{Namespace: "default", Name: "policy1"},
+			},
+			policyGetCalls: []policyGetCall{
+				{
+					policyRef: types.NamespacedName{Namespace: "default", Name: "policy1"},
+					policy: &policyinfo.ApplicationNetworkPolicy{
+						ObjectMeta: metav1.ObjectMeta{Name: "policy1", Namespace: "default"},
+						Spec: policyinfo.ApplicationNetworkPolicySpec{
+							Egress: []policyinfo.ApplicationNetworkPolicyEgressRule{
+								{
+									To: []policyinfo.ApplicationNetworkPolicyPeer{
+										{
+											PodSelector: &metav1.LabelSelector{
+												MatchLabels: map[string]string{"app": "test"},
+											},
+										},
+									},
+								},
+							},
+						},
+					},
+				},
+			},
+			want: []policyinfo.ApplicationNetworkPolicy{
+				{
+					ObjectMeta: metav1.ObjectMeta{Name: "policy1", Namespace: "default"},
+					Spec: policyinfo.ApplicationNetworkPolicySpec{
+						Egress: []policyinfo.ApplicationNetworkPolicyEgressRule{
+							{
+								To: []policyinfo.ApplicationNetworkPolicyPeer{
+									{
+										PodSelector: &metav1.LabelSelector{
+											MatchLabels: map[string]string{"app": "test"},
+										},
+									},
+								},
+							},
+						},
+					},
+				},
+			},
+		},
+		{
+			name: "headless service",
+			service: &corev1.Service{
+				ObjectMeta: metav1.ObjectMeta{Name: "svc", Namespace: "default"},
+				Spec: corev1.ServiceSpec{
+					ClusterIP: "None",
+					Selector:  map[string]string{"app": "test"},
+				},
+			},
+		},
+		{
+			name: "policy get error",
+			service: &corev1.Service{
+				ObjectMeta: metav1.ObjectMeta{Name: "svc", Namespace: "default"},
+				Spec: corev1.ServiceSpec{
+					ClusterIP: "10.100.187.163",
+					Selector:  map[string]string{"app": "test"},
+				},
+			},
+			trackedEgressPolicies: []types.NamespacedName{
+				{Namespace: "default", Name: "policy1"},
+			},
+			policyGetCalls: []policyGetCall{
+				{
+					policyRef: types.NamespacedName{Namespace: "default", Name: "policy1"},
+					err:       errors.New("get error"),
+				},
+			},
+			wantErr: "failed to get ANP: get error",
+		},
+	}
+
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			ctrl := gomock.NewController(t)
+			defer ctrl.Finish()
+			mockClient := mock_client.NewMockClient(ctrl)
+			policyTracker := NewPolicyTracker(log.Log)
+
+			// Setup policy tracker
+			for _, policy := range tt.trackedEgressPolicies {
+				anp := &policyinfo.ApplicationNetworkPolicy{
+					ObjectMeta: metav1.ObjectMeta{Name: policy.Name, Namespace: policy.Namespace},
+					Spec: policyinfo.ApplicationNetworkPolicySpec{
+						Egress: []policyinfo.ApplicationNetworkPolicyEgressRule{
+							{
+								To: []policyinfo.ApplicationNetworkPolicyPeer{
+									{PodSelector: &metav1.LabelSelector{}},
+								},
+							},
+						},
+					},
+				}
+				policyTracker.UpdateGenericPolicy(anp)
+			}
+
+			for _, call := range tt.policyGetCalls {
+				mockClient.EXPECT().Get(gomock.Any(), call.policyRef, gomock.Any()).DoAndReturn(
+					func(ctx context.Context, key types.NamespacedName, obj *policyinfo.ApplicationNetworkPolicy, opts ...client.GetOption) error {
+						if call.policy != nil {
+							*obj = *call.policy
+						}
+						return call.err
+					},
+				).AnyTimes()
+			}
+
+			policyResolver := NewPolicyReferenceResolver(mockClient, policyTracker, log.Log)
+			got, err := policyResolver.GetReferredApplicationNetworkPoliciesForService(context.Background(), tt.service, tt.serviceOld)
+			if len(tt.wantErr) > 0 {
+				assert.EqualError(t, err, tt.wantErr)
+			} else {
+				require.NoError(t, err)
+				assert.Equal(t, tt.want, got)
+			}
 		})
 	}
 }

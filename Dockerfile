@@ -24,7 +24,7 @@ COPY internal/ internal/
 
 
 # Copy CRD file for embedding
-COPY charts/amazon-network-policy-controller-k8s/crds/crds.yaml pkg/crd/crds.yaml
+COPY pkg/crd/crds.yaml pkg/crd/crds.yaml
 # Short-term workaround for controller-gen version mismatch, should remove once the CRD removed from vpc-cni addon
 RUN sed -i 's/controller-gen.kubebuilder.io\/version: v[0-9]\+\.[0-9]\+\.[0-9]\+/controller-gen.kubebuilder.io\/version: v0.11.3/' pkg/crd/crds.yaml
 

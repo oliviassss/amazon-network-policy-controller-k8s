@@ -17,6 +17,7 @@ import (
 	"sigs.k8s.io/controller-runtime/pkg/client"
 	"sigs.k8s.io/controller-runtime/pkg/log"
 
+	policyinfo "github.com/aws/amazon-network-policy-controller-k8s/api/v1alpha1"
 	mock_client "github.com/aws/amazon-network-policy-controller-k8s/mocks/controller-runtime/client"
 )
 
@@ -1220,6 +1221,420 @@ func TestPolicyReferenceResolver_isPodLabelMatchPeer(t *testing.T) {
 				)
 			}
 			got := policyReferenceResolver.isPodLabelMatchPeer(context.Background(), tt.pod, tt.peer, tt.namespace)
+			assert.Equal(t, tt.want, got)
+		})
+	}
+}
+
+func TestPolicyReferenceResolver_GetReferredClusterPoliciesForPod(t *testing.T) {
+	ctrl := gomock.NewController(t)
+	defer ctrl.Finish()
+
+	mockClient := mock_client.NewMockClient(ctrl)
+	nullLogger := logr.New(logr.Discard().GetSink())
+
+	cnp1 := &policyinfo.ClusterNetworkPolicy{
+		ObjectMeta: metav1.ObjectMeta{Name: "cnp1"},
+		Spec: policyinfo.ClusterNetworkPolicySpec{
+			Subject: policyinfo.ClusterNetworkPolicySubject{
+				Namespaces: &metav1.LabelSelector{},
+			},
+		},
+	}
+	cnp2 := &policyinfo.ClusterNetworkPolicy{
+		ObjectMeta: metav1.ObjectMeta{Name: "cnp2"},
+		Spec: policyinfo.ClusterNetworkPolicySpec{
+			Subject: policyinfo.ClusterNetworkPolicySubject{
+				Pods: &policyinfo.NamespacedPod{
+					NamespaceSelector: metav1.LabelSelector{},
+					PodSelector:       metav1.LabelSelector{},
+				},
+			},
+		},
+	}
+
+	cnpList := &policyinfo.ClusterNetworkPolicyList{
+		Items: []policyinfo.ClusterNetworkPolicy{*cnp1, *cnp2},
+	}
+
+	mockClient.EXPECT().List(gomock.Any(), gomock.Any()).DoAndReturn(
+		func(ctx context.Context, list client.ObjectList, opts ...client.ListOption) error {
+			list.(*policyinfo.ClusterNetworkPolicyList).Items = cnpList.Items
+			return nil
+		})
+
+	resolver := &defaultPolicyReferenceResolver{
+		k8sClient: mockClient,
+		logger:    nullLogger,
+	}
+
+	pod := &corev1.Pod{
+		ObjectMeta: metav1.ObjectMeta{
+			Name:      "test-pod",
+			Namespace: "default",
+		},
+	}
+
+	policies, err := resolver.GetReferredClusterPoliciesForPod(context.Background(), pod, nil)
+
+	assert.NoError(t, err)
+	assert.Len(t, policies, 2)
+
+	policyNames := make([]string, len(policies))
+	for i, p := range policies {
+		policyNames[i] = p.Name
+	}
+	assert.Contains(t, policyNames, "cnp1")
+	assert.Contains(t, policyNames, "cnp2")
+}
+func TestPolicyReferenceResolver_GetReferredApplicationNetworkPoliciesForPod(t *testing.T) {
+	type policyGetCall struct {
+		policyRef types.NamespacedName
+		policy    *policyinfo.ApplicationNetworkPolicy
+		err       error
+	}
+
+	tests := []struct {
+		name                      string
+		pod                       *corev1.Pod
+		podOld                    *corev1.Pod
+		policyList                *policyinfo.ApplicationNetworkPolicyList
+		listErr                   error
+		trackedNamespacedPolicies []types.NamespacedName
+		policyGetCalls            []policyGetCall
+		want                      []policyinfo.ApplicationNetworkPolicy
+		wantErr                   string
+	}{
+		{
+			name: "no policies defined",
+			pod: &corev1.Pod{
+				ObjectMeta: metav1.ObjectMeta{Name: "pod", Namespace: "default"},
+			},
+			policyList: &policyinfo.ApplicationNetworkPolicyList{},
+		},
+		{
+			name: "no matching policies",
+			pod: &corev1.Pod{
+				ObjectMeta: metav1.ObjectMeta{
+					Name:      "pod",
+					Namespace: "default",
+					Labels:    map[string]string{"app": "test"},
+				},
+			},
+			policyList: &policyinfo.ApplicationNetworkPolicyList{
+				Items: []policyinfo.ApplicationNetworkPolicy{
+					{
+						ObjectMeta: metav1.ObjectMeta{Name: "policy1", Namespace: "default"},
+						Spec: policyinfo.ApplicationNetworkPolicySpec{
+							PodSelector: metav1.LabelSelector{
+								MatchLabels: map[string]string{"app": "different"},
+							},
+						},
+					},
+				},
+			},
+		},
+		{
+			name: "pod labels match policy spec.PodSelector",
+			pod: &corev1.Pod{
+				ObjectMeta: metav1.ObjectMeta{
+					Name:      "pod",
+					Namespace: "default",
+					Labels:    map[string]string{"app": "test"},
+				},
+			},
+			policyList: &policyinfo.ApplicationNetworkPolicyList{
+				Items: []policyinfo.ApplicationNetworkPolicy{
+					{
+						ObjectMeta: metav1.ObjectMeta{Name: "policy1", Namespace: "default"},
+						Spec: policyinfo.ApplicationNetworkPolicySpec{
+							PodSelector: metav1.LabelSelector{
+								MatchLabels: map[string]string{"app": "test"},
+							},
+						},
+					},
+				},
+			},
+			want: []policyinfo.ApplicationNetworkPolicy{
+				{
+					ObjectMeta: metav1.ObjectMeta{Name: "policy1", Namespace: "default"},
+					Spec: policyinfo.ApplicationNetworkPolicySpec{
+						PodSelector: metav1.LabelSelector{
+							MatchLabels: map[string]string{"app": "test"},
+						},
+					},
+				},
+			},
+		},
+		{
+			name: "policy list returns error",
+			pod: &corev1.Pod{
+				ObjectMeta: metav1.ObjectMeta{Name: "pod", Namespace: "default"},
+			},
+			listErr: errors.New("list error"),
+			wantErr: "failed to fetch ANP policies: list error",
+		},
+		{
+			name: "pod selected by the defined policies",
+			pod: &corev1.Pod{
+				ObjectMeta: metav1.ObjectMeta{
+					Name:      "pod",
+					Namespace: "default",
+					Labels:    map[string]string{"app": "test"},
+				},
+			},
+			policyList: &policyinfo.ApplicationNetworkPolicyList{
+				Items: []policyinfo.ApplicationNetworkPolicy{
+					{
+						ObjectMeta: metav1.ObjectMeta{Name: "policy1", Namespace: "default"},
+						Spec: policyinfo.ApplicationNetworkPolicySpec{
+							PodSelector: metav1.LabelSelector{},
+							Ingress: []networking.NetworkPolicyIngressRule{
+								{
+									From: []networking.NetworkPolicyPeer{
+										{
+											PodSelector: &metav1.LabelSelector{
+												MatchLabels: map[string]string{"app": "test"},
+											},
+										},
+									},
+								},
+							},
+						},
+					},
+				},
+			},
+			want: []policyinfo.ApplicationNetworkPolicy{
+				{
+					ObjectMeta: metav1.ObjectMeta{Name: "policy1", Namespace: "default"},
+					Spec: policyinfo.ApplicationNetworkPolicySpec{
+						PodSelector: metav1.LabelSelector{},
+						Ingress: []networking.NetworkPolicyIngressRule{
+							{
+								From: []networking.NetworkPolicyPeer{
+									{
+										PodSelector: &metav1.LabelSelector{
+											MatchLabels: map[string]string{"app": "test"},
+										},
+									},
+								},
+							},
+						},
+					},
+				},
+			},
+		},
+		{
+			name: "podOld selected by the defined policies",
+			pod: &corev1.Pod{
+				ObjectMeta: metav1.ObjectMeta{
+					Name:      "pod",
+					Namespace: "default",
+					Labels:    map[string]string{"app": "new"},
+				},
+			},
+			podOld: &corev1.Pod{
+				ObjectMeta: metav1.ObjectMeta{
+					Name:      "pod",
+					Namespace: "default",
+					Labels:    map[string]string{"app": "test"},
+				},
+			},
+			policyList: &policyinfo.ApplicationNetworkPolicyList{
+				Items: []policyinfo.ApplicationNetworkPolicy{
+					{
+						ObjectMeta: metav1.ObjectMeta{Name: "policy1", Namespace: "default"},
+						Spec: policyinfo.ApplicationNetworkPolicySpec{
+							PodSelector: metav1.LabelSelector{
+								MatchLabels: map[string]string{"app": "test"},
+							},
+						},
+					},
+				},
+			},
+			want: []policyinfo.ApplicationNetworkPolicy{
+				{
+					ObjectMeta: metav1.ObjectMeta{Name: "policy1", Namespace: "default"},
+					Spec: policyinfo.ApplicationNetworkPolicySpec{
+						PodSelector: metav1.LabelSelector{
+							MatchLabels: map[string]string{"app": "test"},
+						},
+					},
+				},
+			},
+		},
+		{
+			name: "policy get error",
+			pod: &corev1.Pod{
+				ObjectMeta: metav1.ObjectMeta{
+					Name:      "pod",
+					Namespace: "default",
+					Labels:    map[string]string{"app": "test"},
+				},
+			},
+			policyList: &policyinfo.ApplicationNetworkPolicyList{},
+			trackedNamespacedPolicies: []types.NamespacedName{
+				{Namespace: "default", Name: "policy1"},
+			},
+			policyGetCalls: []policyGetCall{
+				{
+					policyRef: types.NamespacedName{Namespace: "default", Name: "policy1"},
+					err:       errors.New("get error"),
+				},
+			},
+			wantErr: "failed to get ANP policy: get error",
+		},
+	}
+
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			ctrl := gomock.NewController(t)
+			defer ctrl.Finish()
+			mockClient := mock_client.NewMockClient(ctrl)
+			policyTracker := NewPolicyTracker(log.Log)
+
+			// Setup policy tracker
+			for _, policy := range tt.trackedNamespacedPolicies {
+				anp := &policyinfo.ApplicationNetworkPolicy{
+					ObjectMeta: metav1.ObjectMeta{Name: policy.Name, Namespace: policy.Namespace},
+					Spec: policyinfo.ApplicationNetworkPolicySpec{
+						Ingress: []networking.NetworkPolicyIngressRule{
+							{
+								From: []networking.NetworkPolicyPeer{
+									{NamespaceSelector: &metav1.LabelSelector{}},
+								},
+							},
+						},
+					},
+				}
+				policyTracker.UpdateGenericPolicy(anp)
+			}
+
+			mockClient.EXPECT().List(gomock.Any(), gomock.Any(), gomock.Any()).DoAndReturn(
+				func(ctx context.Context, list *policyinfo.ApplicationNetworkPolicyList, opts ...client.ListOption) error {
+					if tt.policyList != nil {
+						*list = *tt.policyList
+					}
+					return tt.listErr
+				},
+			).AnyTimes()
+
+			for _, call := range tt.policyGetCalls {
+				mockClient.EXPECT().Get(gomock.Any(), call.policyRef, gomock.Any()).DoAndReturn(
+					func(ctx context.Context, key types.NamespacedName, obj *policyinfo.ApplicationNetworkPolicy, opts ...client.GetOption) error {
+						if call.policy != nil {
+							*obj = *call.policy
+						}
+						return call.err
+					},
+				).AnyTimes()
+			}
+
+			policyResolver := NewPolicyReferenceResolver(mockClient, policyTracker, log.Log)
+			got, err := policyResolver.GetReferredApplicationNetworkPoliciesForPod(context.Background(), tt.pod, tt.podOld)
+			if len(tt.wantErr) > 0 {
+				assert.EqualError(t, err, tt.wantErr)
+			} else {
+				require.NoError(t, err)
+				assert.Equal(t, tt.want, got)
+			}
+		})
+	}
+}
+
+func TestPolicyReferenceResolver_isPodMatchesANPPolicySelector(t *testing.T) {
+	tests := []struct {
+		name   string
+		pod    *corev1.Pod
+		podOld *corev1.Pod
+		policy *policyinfo.ApplicationNetworkPolicy
+		want   bool
+	}{
+		{
+			name: "empty pod labels and policy pod selector",
+			pod: &corev1.Pod{
+				ObjectMeta: metav1.ObjectMeta{Name: "pod", Namespace: "default"},
+			},
+			policy: &policyinfo.ApplicationNetworkPolicy{
+				ObjectMeta: metav1.ObjectMeta{Name: "policy", Namespace: "default"},
+				Spec: policyinfo.ApplicationNetworkPolicySpec{
+					PodSelector: metav1.LabelSelector{},
+				},
+			},
+			want: true,
+		},
+		{
+			name: "pod labels match policy pod selector",
+			pod: &corev1.Pod{
+				ObjectMeta: metav1.ObjectMeta{
+					Name:      "pod",
+					Namespace: "default",
+					Labels:    map[string]string{"app": "test"},
+				},
+			},
+			policy: &policyinfo.ApplicationNetworkPolicy{
+				ObjectMeta: metav1.ObjectMeta{Name: "policy", Namespace: "default"},
+				Spec: policyinfo.ApplicationNetworkPolicySpec{
+					PodSelector: metav1.LabelSelector{
+						MatchLabels: map[string]string{"app": "test"},
+					},
+				},
+			},
+			want: true,
+		},
+		{
+			name: "pod labels mismatch policy pod selector",
+			pod: &corev1.Pod{
+				ObjectMeta: metav1.ObjectMeta{
+					Name:      "pod",
+					Namespace: "default",
+					Labels:    map[string]string{"app": "test"},
+				},
+			},
+			policy: &policyinfo.ApplicationNetworkPolicy{
+				ObjectMeta: metav1.ObjectMeta{Name: "policy", Namespace: "default"},
+				Spec: policyinfo.ApplicationNetworkPolicySpec{
+					PodSelector: metav1.LabelSelector{
+						MatchLabels: map[string]string{"app": "different"},
+					},
+				},
+			},
+			want: false,
+		},
+		{
+			name: "old pod matches policy podSelector",
+			pod: &corev1.Pod{
+				ObjectMeta: metav1.ObjectMeta{
+					Name:      "pod",
+					Namespace: "default",
+					Labels:    map[string]string{"app": "new"},
+				},
+			},
+			podOld: &corev1.Pod{
+				ObjectMeta: metav1.ObjectMeta{
+					Name:      "pod",
+					Namespace: "default",
+					Labels:    map[string]string{"app": "test"},
+				},
+			},
+			policy: &policyinfo.ApplicationNetworkPolicy{
+				ObjectMeta: metav1.ObjectMeta{Name: "policy", Namespace: "default"},
+				Spec: policyinfo.ApplicationNetworkPolicySpec{
+					PodSelector: metav1.LabelSelector{
+						MatchLabels: map[string]string{"app": "test"},
+					},
+				},
+			},
+			want: true,
+		},
+	}
+
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			policyResolver := &defaultPolicyReferenceResolver{
+				logger: log.Log,
+			}
+			got := policyResolver.isPodMatchesANPPolicySelector(tt.pod, tt.podOld, tt.policy)
 			assert.Equal(t, tt.want, got)
 		})
 	}

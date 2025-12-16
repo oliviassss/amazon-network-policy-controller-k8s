@@ -1,0 +1,49 @@
+apiVersion: networking.k8s.aws/v1alpha1
+kind: ApplicationNetworkPolicy
+metadata:
+  name: anp-mixed-rules
+  namespace: shared-services
+spec:
+  podSelector: {}
+  policyTypes:
+  - Ingress
+  - Egress
+  ingress:
+  - from:
+    - namespaceSelector:
+        matchLabels:
+          environment: production
+    ports:
+    - protocol: UDP
+      port: 53
+    - protocol: TCP
+      port: 53
+  - from:
+    - namespaceSelector:
+        matchLabels:
+          environment: staging
+    ports:
+    - protocol: UDP
+      port: 8080
+  egress:
+  - to:
+    - ipBlock:
+        cidr: 8.8.8.0/24
+        except:
+        - 8.8.8.1/32
+    ports:
+    - protocol: UDP
+      port: 53
+  - to:
+    - domainNames:
+      - "root-servers.net"
+      - "*.root-servers.net"
+    ports:
+    - protocol: UDP
+      port: 53
+  - to:
+    - domainNames:
+      - "amazonaws.com"
+    ports:
+    - protocol: TCP
+      port: 443

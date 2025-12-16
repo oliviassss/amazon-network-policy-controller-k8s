@@ -3,7 +3,8 @@
 
 # Parameters:
 # KUBECONFIG: path to the kubeconfig file, default ~/.kube/config
-# NP_CONTROLLER_IMAGE: Custom network policy controller image
+# NP_CONTROLLER_IMAGE: Custom network policy controller image repository
+# NP_CONTROLLER_TAG: Custom network policy controller image tag
 # NP_CONTROLLER_ENDPOINT_CHUNK_SIZE: The number of endpoints in policy endpoint resource
 
 set -e
@@ -18,13 +19,19 @@ if [[ ! -z $NP_CONTROLLER_IMAGE ]]; then
     HELM_NPC_ARGS+=" --set image.repository=$NP_CONTROLLER_IMAGE"
 fi
 
+if [[ ! -z $NP_CONTROLLER_TAG ]]; then
+    HELM_NPC_ARGS+=" --set image.tag=$NP_CONTROLLER_TAG"
+fi
+
 if [[ ! -z $NP_CONTROLLER_ENDPOINT_CHUNK_SIZE ]]; then
     HELM_NPC_ARGS+=" --set endpointChunkSize=$NP_CONTROLLER_ENDPOINT_CHUNK_SIZE"
 fi
 
 echo "Deploy the default Amazon Network Policy Controller on Dataplane"
 helm template amazon-network-policy-controller-k8s ${DIR}/../charts/amazon-network-policy-controller-k8s \
-    --set enableConfigMapCheck=false $HELM_NPC_ARGS | kubectl apply -f -
+    --namespace kube-system \
+    --set enableConfigMapCheck=false \
+    --set useExistingClusterRole=true $HELM_NPC_ARGS | kubectl apply -f -
 
 echo "Restarting the Controller"
 kubectl rollout restart deployment.v1.apps/amazon-network-policy-controller-k8s -n kube-system

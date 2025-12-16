@@ -1,0 +1,18 @@
+apiVersion: networking.k8s.aws/v1alpha1
+kind: ApplicationNetworkPolicy
+metadata:
+  name: invalid-ingress-domain
+  namespace: staging
+spec:
+  podSelector:
+    matchLabels:
+      component: frontend
+  policyTypes:
+  - Ingress
+  ingress:
+  - from:
+    - domainNames:
+      - "api.example.com"
+    ports:
+    - protocol: TCP
+      port: 80

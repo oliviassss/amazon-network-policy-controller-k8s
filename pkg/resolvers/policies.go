@@ -3,6 +3,7 @@ package resolvers
 import (
 	"context"
 
+	policyinfo "github.com/aws/amazon-network-policy-controller-k8s/api/v1alpha1"
 	"github.com/go-logr/logr"
 	corev1 "k8s.io/api/core/v1"
 	networking "k8s.io/api/networking/v1"
@@ -14,6 +15,12 @@ type PolicyReferenceResolver interface {
 	GetReferredPoliciesForPod(ctx context.Context, pod, podOld *corev1.Pod) ([]networking.NetworkPolicy, error)
 	GetReferredPoliciesForNamespace(ctx context.Context, ns, nsOld *corev1.Namespace) ([]networking.NetworkPolicy, error)
 	GetReferredPoliciesForService(ctx context.Context, svc, svcOld *corev1.Service) ([]networking.NetworkPolicy, error)
+	GetReferredApplicationNetworkPoliciesForPod(ctx context.Context, pod, podOld *corev1.Pod) ([]policyinfo.ApplicationNetworkPolicy, error)
+	GetReferredApplicationNetworkPoliciesForNamespace(ctx context.Context, ns, nsOld *corev1.Namespace) ([]policyinfo.ApplicationNetworkPolicy, error)
+	GetReferredApplicationNetworkPoliciesForService(ctx context.Context, svc, svcOld *corev1.Service) ([]policyinfo.ApplicationNetworkPolicy, error)
+	GetReferredClusterPoliciesForPod(ctx context.Context, pod, podOld *corev1.Pod) ([]policyinfo.ClusterNetworkPolicy, error)
+	GetReferredClusterPoliciesForNamespace(ctx context.Context, ns, nsOld *corev1.Namespace) ([]policyinfo.ClusterNetworkPolicy, error)
+	GetReferredClusterPoliciesForService(ctx context.Context, svc, svcOld *corev1.Service) ([]policyinfo.ClusterNetworkPolicy, error)
 }
 
 func NewPolicyReferenceResolver(k8sClient client.Client, policyTracker PolicyTracker, logger logr.Logger) *defaultPolicyReferenceResolver {
@@ -49,4 +56,53 @@ func (r *defaultPolicyReferenceResolver) GetReferredPoliciesForNamespace(ctx con
 // The svcOld resource is to account for the service label changes during update.
 func (r *defaultPolicyReferenceResolver) GetReferredPoliciesForService(ctx context.Context, svc *corev1.Service, svcOld *corev1.Service) ([]networking.NetworkPolicy, error) {
 	return r.getReferredPoliciesForService(ctx, svc, svcOld)
+}
+
+// GetReferredApplicationNetworkPoliciesForPod returns the application network policies matching the pod's labels in ingress or egress rules.
+// The podOld resource is used to determine the policies to reconcile for label changes.
+func (r *defaultPolicyReferenceResolver) GetReferredApplicationNetworkPoliciesForPod(ctx context.Context, pod *corev1.Pod, podOld *corev1.Pod) ([]policyinfo.ApplicationNetworkPolicy, error) {
+	return r.getReferredApplicationNetworkPoliciesForPod(ctx, pod, podOld)
+}
+
+// GetReferredApplicationNetworkPoliciesForNamespace returns the application network policies matching the namespace's labels in ingress or egress rules.
+// The nsOld resource is to account for namespace label changes during update.
+func (r *defaultPolicyReferenceResolver) GetReferredApplicationNetworkPoliciesForNamespace(ctx context.Context, ns *corev1.Namespace, nsOld *corev1.Namespace) ([]policyinfo.ApplicationNetworkPolicy, error) {
+	return r.getReferredApplicationNetworkPoliciesForNamespace(ctx, ns, nsOld)
+}
+
+// GetReferredApplicationNetworkPoliciesForService returns the application network policies matching the service's pod selector in the egress rules.
+// The svcOld resource is to account for the service label changes during update.
+func (r *defaultPolicyReferenceResolver) GetReferredApplicationNetworkPoliciesForService(ctx context.Context, svc *corev1.Service, svcOld *corev1.Service) ([]policyinfo.ApplicationNetworkPolicy, error) {
+	return r.getReferredApplicationNetworkPoliciesForService(ctx, svc, svcOld)
+}
+
+// GetReferredClusterPoliciesForPod returns the cluster network policies that might be affected by pod changes.
+func (r *defaultPolicyReferenceResolver) GetReferredClusterPoliciesForPod(ctx context.Context, pod *corev1.Pod, podOld *corev1.Pod) ([]policyinfo.ClusterNetworkPolicy, error) {
+	// For CNP, any pod change could affect cluster policies, so return all CNPs
+	// this could be optimized to only return CNPs that actually select this pod
+	cnpList := &policyinfo.ClusterNetworkPolicyList{}
+	if err := r.k8sClient.List(ctx, cnpList); err != nil {
+		return nil, err
+	}
+	return cnpList.Items, nil
+}
+
+// GetReferredClusterPoliciesForNamespace returns the cluster network policies that might be affected by namespace changes.
+func (r *defaultPolicyReferenceResolver) GetReferredClusterPoliciesForNamespace(ctx context.Context, ns *corev1.Namespace, nsOld *corev1.Namespace) ([]policyinfo.ClusterNetworkPolicy, error) {
+	// For CNP, namespace changes could affect cluster policies, so return all CNPs
+	cnpList := &policyinfo.ClusterNetworkPolicyList{}
+	if err := r.k8sClient.List(ctx, cnpList); err != nil {
+		return nil, err
+	}
+	return cnpList.Items, nil
+}
+
+// GetReferredClusterPoliciesForService returns the cluster network policies that might be affected by service changes.
+func (r *defaultPolicyReferenceResolver) GetReferredClusterPoliciesForService(ctx context.Context, svc *corev1.Service, svcOld *corev1.Service) ([]policyinfo.ClusterNetworkPolicy, error) {
+	// For CNP, service changes could affect cluster policies, so return all CNPs
+	cnpList := &policyinfo.ClusterNetworkPolicyList{}
+	if err := r.k8sClient.List(ctx, cnpList); err != nil {
+		return nil, err
+	}
+	return cnpList.Items, nil
 }

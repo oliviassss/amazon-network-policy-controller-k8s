@@ -1,0 +1,48 @@
+apiVersion: networking.k8s.aws/v1alpha1
+kind: ClusterNetworkPolicy
+metadata:
+  name: cnp-ingress-all-fields-example
+spec:
+  tier: Admin
+  priority: 100
+  subject:
+    namespaces:
+      matchLabels:
+        environment: production
+  ingress:
+  - name: allow-from-frontend-staging
+    action: Accept
+    from:
+    - pods:
+        namespaceSelector:
+          matchLabels:
+            environment: staging
+        podSelector:
+          matchLabels:
+            component: frontend
+    ports:
+    - portNumber:
+        protocol: TCP
+        port: 3000
+  - name: pass-monitoring-dev-traffic
+    action: Pass
+    from:
+    - namespaces:
+        matchLabels:
+          monitoring: enabled
+    - namespaces:
+        matchLabels:
+          environment: staging
+    ports:
+    - portNumber:
+        protocol: TCP
+        port: 9090
+    - portNumber:
+        protocol: TCP
+        port: 8080
+  - name: deny-default
+    action: Deny
+    from:
+    - namespaces:
+        matchLabels:
+          kubernetes.io/metadata.name: staging

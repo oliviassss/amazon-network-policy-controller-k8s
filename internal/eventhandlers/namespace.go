@@ -65,6 +65,7 @@ func (h *enqueueRequestForNamespaceEvent) Generic(_ context.Context, _ event.Gen
 }
 
 func (h *enqueueRequestForNamespaceEvent) enqueueReferredPolicies(ctx context.Context, _ workqueue.TypedRateLimitingInterface[reconcile.Request], ns, nsOld *corev1.Namespace) {
+	// Handle NetworkPolicy
 	referredPolicies, err := h.policyResolver.GetReferredPoliciesForNamespace(ctx, ns, nsOld)
 	if err != nil {
 		h.logger.Error(err, "Unable to get referred policies", "namespace", k8s.NamespacedName(ns))
@@ -75,6 +76,34 @@ func (h *enqueueRequestForNamespaceEvent) enqueueReferredPolicies(ctx context.Co
 		h.logger.V(1).Info("Enqueue from namespace reference", "policy", k8s.NamespacedName(policy), "namespace", k8s.NamespacedName(ns))
 		h.policyEventChan <- event.GenericEvent{
 			Object: policy,
+		}
+	}
+
+	// Handle ApplicationNetworkPolicy
+	referredANPs, err := h.policyResolver.GetReferredApplicationNetworkPoliciesForNamespace(ctx, ns, nsOld)
+	if err != nil {
+		h.logger.Error(err, "Unable to get referred ANPs", "namespace", k8s.NamespacedName(ns))
+		return
+	}
+	for i := range referredANPs {
+		anp := &referredANPs[i]
+		h.logger.V(1).Info("Enqueue ANPs from namespace reference", "anp", k8s.NamespacedName(anp), "namespace", k8s.NamespacedName(ns))
+		h.policyEventChan <- event.GenericEvent{
+			Object: anp,
+		}
+	}
+
+	// Handle Cluster Network Policy
+	referredClusterPolicies, err := h.policyResolver.GetReferredClusterPoliciesForNamespace(ctx, ns, nsOld)
+	if err != nil {
+		h.logger.Error(err, "Unable to get referred cluster policies", "namespace", k8s.NamespacedName(ns))
+		return
+	}
+	for i := range referredClusterPolicies {
+		cnp := &referredClusterPolicies[i]
+		h.logger.V(1).Info("Enqueue CNP from namespace reference", "cnp", cnp.Name, "namespace", k8s.NamespacedName(ns))
+		h.policyEventChan <- event.GenericEvent{
+			Object: cnp,
 		}
 	}
 }

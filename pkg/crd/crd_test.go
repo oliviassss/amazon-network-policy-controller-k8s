@@ -40,10 +40,11 @@ func Test_decodeCRDs(t *testing.T) {
 	crds, err := decodeCRDs()
 	g.Expect(err).ToNot(HaveOccurred())
 	g.Expect(crds).ToNot(BeEmpty())
+	g.Expect(crds).To(HaveLen(4))
 
 	// Verify the first CRD has expected properties
 	g.Expect(crds[0].Spec.Group).To(Equal("networking.k8s.aws"))
-	g.Expect(crds[0].Spec.Names.Kind).To(Equal("PolicyEndpoint"))
+	g.Expect(crds[0].Spec.Names.Kind).To(Equal("ApplicationNetworkPolicy"))
 }
 
 func Test_ensureCRD(t *testing.T) {

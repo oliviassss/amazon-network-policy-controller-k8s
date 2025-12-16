@@ -1,0 +1,54 @@
+apiVersion: networking.k8s.aws/v1alpha1
+kind: ApplicationNetworkPolicy
+metadata:
+  name: backend-egress-variants
+  namespace: staging
+spec:
+  podSelector:
+    matchLabels:
+      component: backend
+  policyTypes:
+  - Egress
+  egress:
+  # Rule with podSelector only
+  - to:
+    - podSelector:
+        matchLabels:
+          component: frontend
+    ports:
+    - protocol: TCP
+      port: 80
+  # Rule with namespaceSelector only
+  - to:
+    - namespaceSelector:
+        matchLabels:
+          environment: production
+    ports:
+    - protocol: TCP
+      port: 5432
+  # Rule with ipBlock only
+  - to:
+    - ipBlock:
+        cidr: 172.16.0.0/12
+        except:
+        - 172.16.1.0/24
+    ports:
+    - protocol: TCP
+      port: 443
+  # Rule with domainNames only
+  - to:
+    - domainNames:
+      - "api.example.com"
+      - "*.googleapis.com"
+    ports:
+    - protocol: TCP
+      port: 443
+  # Another domainNames rule
+  - to:
+    - domainNames:
+      - "s3.us-west-2.amazonaws.com"
+      - "ec2.us-west-2.amazonaws.com"
+      - "*.eks.amazonaws.com"
+    ports:
+    - protocol: TCP
+      port: 8080

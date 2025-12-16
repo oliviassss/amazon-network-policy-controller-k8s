@@ -17,6 +17,47 @@ The controller does not require any IAM policies. It does not make AWS API calls
 - Kubernetes Version - 1.25+
 - Amazon VPC CNI version - 1.14.0+
 
+## Deploy Controller on Dataplane for Development Testing
+
+To deploy the network policy controller on dataplane nodes for development and testing:
+
+1. **Deploy the controller:**
+This will deploy the image specified in helm chart
+   ```bash
+   make deploy-controller-on-dataplane
+   ```
+If want to deploy a custom image, you can use the cmd
+   ```bash
+   make deploy-controller-on-dataplane NP_CONTROLLER_IMAGE=<your-image-repository> NP_CONTROLLER_TAG=<your-image-tag>
+   ```
+Verify the image deployed
+```bash
+kubectl get deployment amazon-network-policy-controller-k8s -n kube-system | grep -i image
+```
+
+**Optional steps (only needed if using custom images with additional CRDs/permissions):**
+
+2. **Apply updated RBAC permissions:**
+   ```bash
+   kubectl apply -f config/rbac/role.yaml
+   ```
+
+3. **Apply latest CRDs:**
+   ```bash
+   kubectl apply -f config/crd/bases/
+   ```
+
+4. **Restart controller to pick up new permissions:**
+   ```bash
+   kubectl rollout restart deployment/amazon-network-policy-controller-k8s -n kube-system
+   ```
+
+**Verify deployment:**
+```bash
+kubectl get deployment amazon-network-policy-controller-k8s -n kube-system
+kubectl logs deployment/amazon-network-policy-controller-k8s -n kube-system
+```
+
 ## Security Disclosures 
 
 If you think you’ve found a potential security issue, please do not post it in the Issues. Instead, please follow the

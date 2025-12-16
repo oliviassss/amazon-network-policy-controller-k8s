@@ -233,7 +233,7 @@ func (r *defaultEndpointsResolver) getIngressRulesPorts(ctx context.Context, pol
 
 	// since we pull ports from dst pods, we should deduplicate them
 	dedupedPorts := dedupPorts(portList)
-	r.logger.Info("Got ingress ports from dst pods", "port", dedupedPorts)
+	r.logger.V(1).Info("Got ingress ports from dst pods", "port", dedupedPorts)
 
 	return dedupedPorts
 }

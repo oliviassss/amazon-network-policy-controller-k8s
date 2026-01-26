@@ -42,7 +42,7 @@ func (r *defaultPolicyReferenceResolver) getReferredPoliciesForPod(ctx context.C
 		"policies", referredPolicies)
 
 	for _, ref := range r.policyTracker.GetPoliciesWithNamespaceReferences().UnsortedList() {
-		r.logger.Info("Policy containing namespace selectors", "ref", ref)
+		r.logger.V(1).Info("Policy containing namespace selectors", "ref", ref)
 		if processedPolicies.Has(ref) {
 			continue
 		}
@@ -119,13 +119,11 @@ func (r *defaultPolicyReferenceResolver) isPodLabelMatchPeer(ctx context.Context
 			return false
 		}
 		if !nsSelector.Matches(labels.Set(ns.Labels)) {
-			r.logger.Info("nsSelector does not match ns labels", "selector", nsSelector,
-				"ns", ns)
 			return false
 		}
 
 		if peer.PodSelector == nil {
-			r.logger.Info("nsSelector matches ns labels", "selector", nsSelector,
+			r.logger.V(1).Info("nsSelector matches ns labels", "selector", nsSelector,
 				"ns", ns)
 			return true
 		}
@@ -176,7 +174,7 @@ func (r *defaultPolicyReferenceResolver) getReferredApplicationNetworkPoliciesFo
 	// Second loop: Process cross-namespace ANP policies
 	// Check policies from other namespaces that have namespaceSelector rules
 	for _, ref := range r.policyTracker.GetApplicationNetworkPoliciesWithNamespaceReferences().UnsortedList() {
-		r.logger.Info("ANP Policy containing namespace selectors", "ref", ref)
+		r.logger.V(1).Info("ANP Policy containing namespace selectors", "ref", ref)
 		if processedPolicies.Has(ref) {
 			continue
 		}

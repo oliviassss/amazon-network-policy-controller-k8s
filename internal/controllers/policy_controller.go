@@ -39,6 +39,7 @@ import (
 	"github.com/aws/amazon-network-policy-controller-k8s/internal/eventhandlers"
 	"github.com/aws/amazon-network-policy-controller-k8s/pkg/config"
 	"github.com/aws/amazon-network-policy-controller-k8s/pkg/k8s"
+	"github.com/aws/amazon-network-policy-controller-k8s/pkg/metrics"
 	"github.com/aws/amazon-network-policy-controller-k8s/pkg/policyendpoints"
 	"github.com/aws/amazon-network-policy-controller-k8s/pkg/resolvers"
 )
@@ -207,10 +208,30 @@ func (r *policyReconciler) reconcile(ctx context.Context, request reconcile.Requ
 }
 
 func (r *policyReconciler) reconcileNetworkPolicy(ctx context.Context, networkPolicy *networking.NetworkPolicy) error {
+	start := time.Now()
+	defer func() {
+		metrics.RecordWorkDuration("NetworkPolicy", time.Since(start))
+	}()
+
+	// Check if this is a new policy (no finalizers yet)
+	isNewPolicy := len(networkPolicy.Finalizers) == 0
+
 	if err := r.finalizerManager.AddFinalizers(ctx, networkPolicy, policyFinalizerName); err != nil {
+		metrics.PolicyReconciliations.WithLabelValues("NetworkPolicy", "error").Inc()
 		return err
 	}
-	return r.policyEndpointsManager.Reconcile(ctx, networkPolicy)
+
+	// Increment counter for new policies only
+	if isNewPolicy {
+		metrics.OnPolicyCreated("NetworkPolicy")
+	}
+
+	if err := r.policyEndpointsManager.Reconcile(ctx, networkPolicy); err != nil {
+		metrics.PolicyReconciliations.WithLabelValues("NetworkPolicy", "error").Inc()
+		return err
+	}
+	metrics.PolicyReconciliations.WithLabelValues("NetworkPolicy", "success").Inc()
+	return nil
 }
 
 func (r *policyReconciler) cleanupNetworkPolicy(ctx context.Context, networkPolicy *networking.NetworkPolicy) error {
@@ -222,15 +243,37 @@ func (r *policyReconciler) cleanupNetworkPolicy(ctx context.Context, networkPoli
 		if err := r.finalizerManager.RemoveFinalizers(ctx, networkPolicy, policyFinalizerName); err != nil {
 			return err
 		}
+		// Decrement counter when policy is deleted
+		metrics.OnPolicyDeleted("NetworkPolicy")
 	}
 	return nil
 }
 
 func (r *policyReconciler) reconcileApplicationNetworkPolicy(ctx context.Context, applicationNetworkPolicy *policyinfo.ApplicationNetworkPolicy) error {
+	start := time.Now()
+	defer func() {
+		metrics.RecordWorkDuration("ApplicationNetworkPolicy", time.Since(start))
+	}()
+
+	// Check if this is a new policy (no finalizers yet)
+	isNewPolicy := len(applicationNetworkPolicy.Finalizers) == 0
+
 	if err := r.finalizerManager.AddFinalizers(ctx, applicationNetworkPolicy, anpFinalizerName); err != nil {
+		metrics.PolicyReconciliations.WithLabelValues("ApplicationNetworkPolicy", "error").Inc()
 		return err
 	}
-	return r.policyEndpointsManager.ReconcileANP(ctx, applicationNetworkPolicy)
+
+	// Increment counter for new policies
+	if isNewPolicy {
+		metrics.OnPolicyCreated("ApplicationNetworkPolicy")
+	}
+
+	if err := r.policyEndpointsManager.ReconcileANP(ctx, applicationNetworkPolicy); err != nil {
+		metrics.PolicyReconciliations.WithLabelValues("ApplicationNetworkPolicy", "error").Inc()
+		return err
+	}
+	metrics.PolicyReconciliations.WithLabelValues("ApplicationNetworkPolicy", "success").Inc()
+	return nil
 }
 
 func (r *policyReconciler) cleanupApplicationNetworkPolicy(ctx context.Context, applicationNetworkPolicy *policyinfo.ApplicationNetworkPolicy) error {
@@ -242,15 +285,37 @@ func (r *policyReconciler) cleanupApplicationNetworkPolicy(ctx context.Context, 
 		if err := r.finalizerManager.RemoveFinalizers(ctx, applicationNetworkPolicy, anpFinalizerName); err != nil {
 			return err
 		}
+		// Decrement counter when policy is deleted
+		metrics.OnPolicyDeleted("ApplicationNetworkPolicy")
 	}
 	return nil
 }
 
 func (r *policyReconciler) reconcileClusterNetworkPolicy(ctx context.Context, cnp *policyinfo.ClusterNetworkPolicy) error {
+	start := time.Now()
+	defer func() {
+		metrics.RecordWorkDuration("ClusterNetworkPolicy", time.Since(start))
+	}()
+
+	// Check if this is a new policy (no finalizers yet)
+	isNewPolicy := len(cnp.Finalizers) == 0
+
 	if err := r.finalizerManager.AddFinalizers(ctx, cnp, cnpFinalizerName); err != nil {
+		metrics.PolicyReconciliations.WithLabelValues("ClusterNetworkPolicy", "error").Inc()
 		return err
 	}
-	return r.policyEndpointsManager.ReconcileCNP(ctx, cnp)
+
+	// Increment counter for new policies
+	if isNewPolicy {
+		metrics.OnPolicyCreated("ClusterNetworkPolicy")
+	}
+
+	if err := r.policyEndpointsManager.ReconcileCNP(ctx, cnp); err != nil {
+		metrics.PolicyReconciliations.WithLabelValues("ClusterNetworkPolicy", "error").Inc()
+		return err
+	}
+	metrics.PolicyReconciliations.WithLabelValues("ClusterNetworkPolicy", "success").Inc()
+	return nil
 }
 
 func (r *policyReconciler) cleanupClusterNetworkPolicy(ctx context.Context, cnp *policyinfo.ClusterNetworkPolicy) error {
@@ -262,6 +327,8 @@ func (r *policyReconciler) cleanupClusterNetworkPolicy(ctx context.Context, cnp 
 		if err := r.finalizerManager.RemoveFinalizers(ctx, cnp, cnpFinalizerName); err != nil {
 			return err
 		}
+		// Decrement counter when policy is deleted
+		metrics.OnPolicyDeleted("ClusterNetworkPolicy")
 	}
 	return nil
 }

@@ -101,7 +101,7 @@ func (r *policyReconciler) Reconcile(ctx context.Context, request reconcile.Requ
 	startTime := time.Now()
 	r.logger.Info("Got reconcile request", "resource", request)
 	err := r.reconcile(ctx, request)
-	r.logger.Info("Reconcile completed", "resource", request, "duration", time.Since(startTime))
+	r.logger.Info("Reconcile completed", "resource", request, "duration", time.Since(startTime), "success", err == nil)
 	return ctrl.Result{}, err
 }
 

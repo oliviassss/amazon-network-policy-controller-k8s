@@ -98,8 +98,11 @@ type policyReconciler struct {
 //+kubebuilder:rbac:groups="networking.k8s.io",resources=networkpolicies,verbs=get;list;watch;update;patch
 
 func (r *policyReconciler) Reconcile(ctx context.Context, request reconcile.Request) (reconcile.Result, error) {
+	startTime := time.Now()
 	r.logger.Info("Got reconcile request", "resource", request)
-	return ctrl.Result{}, r.reconcile(ctx, request)
+	err := r.reconcile(ctx, request)
+	r.logger.Info("Reconcile completed", "resource", request, "duration", time.Since(startTime))
+	return ctrl.Result{}, err
 }
 
 func (r *policyReconciler) SetupWithManager(ctx context.Context, mgr ctrl.Manager) error {

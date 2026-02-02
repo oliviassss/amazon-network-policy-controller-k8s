@@ -2,12 +2,13 @@ package metrics
 
 import (
 	"context"
+	"time"
+
 	"github.com/aws/amazon-network-policy-controller-k8s/api/v1alpha1"
 	"github.com/prometheus/client_golang/prometheus"
 	networking "k8s.io/api/networking/v1"
 	"sigs.k8s.io/controller-runtime/pkg/client"
 	"sigs.k8s.io/controller-runtime/pkg/metrics"
-	"time"
 )
 
 var (

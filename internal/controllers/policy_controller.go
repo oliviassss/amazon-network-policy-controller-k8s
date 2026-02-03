@@ -213,7 +213,6 @@ func (r *policyReconciler) reconcileNetworkPolicy(ctx context.Context, networkPo
 		metrics.RecordWorkDuration("NetworkPolicy", time.Since(start))
 	}()
 
-	// Check if this is a new policy (no finalizers yet)
 	isNewPolicy := len(networkPolicy.Finalizers) == 0
 
 	if err := r.finalizerManager.AddFinalizers(ctx, networkPolicy, policyFinalizerName); err != nil {
@@ -221,7 +220,6 @@ func (r *policyReconciler) reconcileNetworkPolicy(ctx context.Context, networkPo
 		return err
 	}
 
-	// Increment counter for new policies only
 	if isNewPolicy {
 		metrics.OnPolicyCreated("NetworkPolicy")
 	}
@@ -243,7 +241,6 @@ func (r *policyReconciler) cleanupNetworkPolicy(ctx context.Context, networkPoli
 		if err := r.finalizerManager.RemoveFinalizers(ctx, networkPolicy, policyFinalizerName); err != nil {
 			return err
 		}
-		// Decrement counter when policy is deleted
 		metrics.OnPolicyDeleted("NetworkPolicy")
 	}
 	return nil
@@ -255,7 +252,6 @@ func (r *policyReconciler) reconcileApplicationNetworkPolicy(ctx context.Context
 		metrics.RecordWorkDuration("ApplicationNetworkPolicy", time.Since(start))
 	}()
 
-	// Check if this is a new policy (no finalizers yet)
 	isNewPolicy := len(applicationNetworkPolicy.Finalizers) == 0
 
 	if err := r.finalizerManager.AddFinalizers(ctx, applicationNetworkPolicy, anpFinalizerName); err != nil {
@@ -263,7 +259,6 @@ func (r *policyReconciler) reconcileApplicationNetworkPolicy(ctx context.Context
 		return err
 	}
 
-	// Increment counter for new policies
 	if isNewPolicy {
 		metrics.OnPolicyCreated("ApplicationNetworkPolicy")
 	}
@@ -285,7 +280,6 @@ func (r *policyReconciler) cleanupApplicationNetworkPolicy(ctx context.Context, 
 		if err := r.finalizerManager.RemoveFinalizers(ctx, applicationNetworkPolicy, anpFinalizerName); err != nil {
 			return err
 		}
-		// Decrement counter when policy is deleted
 		metrics.OnPolicyDeleted("ApplicationNetworkPolicy")
 	}
 	return nil
@@ -297,7 +291,6 @@ func (r *policyReconciler) reconcileClusterNetworkPolicy(ctx context.Context, cn
 		metrics.RecordWorkDuration("ClusterNetworkPolicy", time.Since(start))
 	}()
 
-	// Check if this is a new policy (no finalizers yet)
 	isNewPolicy := len(cnp.Finalizers) == 0
 
 	if err := r.finalizerManager.AddFinalizers(ctx, cnp, cnpFinalizerName); err != nil {
@@ -305,7 +298,6 @@ func (r *policyReconciler) reconcileClusterNetworkPolicy(ctx context.Context, cn
 		return err
 	}
 
-	// Increment counter for new policies
 	if isNewPolicy {
 		metrics.OnPolicyCreated("ClusterNetworkPolicy")
 	}
@@ -327,7 +319,6 @@ func (r *policyReconciler) cleanupClusterNetworkPolicy(ctx context.Context, cnp 
 		if err := r.finalizerManager.RemoveFinalizers(ctx, cnp, cnpFinalizerName); err != nil {
 			return err
 		}
-		// Decrement counter when policy is deleted
 		metrics.OnPolicyDeleted("ClusterNetworkPolicy")
 	}
 	return nil

@@ -6,6 +6,7 @@ import (
 
 	"github.com/aws/amazon-network-policy-controller-k8s/api/v1alpha1"
 	"github.com/prometheus/client_golang/prometheus"
+	dto "github.com/prometheus/client_model/go"
 	networking "k8s.io/api/networking/v1"
 	"sigs.k8s.io/controller-runtime/pkg/client"
 	"sigs.k8s.io/controller-runtime/pkg/metrics"
@@ -43,10 +44,17 @@ var (
 		},
 		[]string{"policy_type"},
 	)
+
+	AdvancedNetworkPolicyEnabled = prometheus.NewGauge(
+		prometheus.GaugeOpts{
+			Name: "advanced_network_policy_enabled",
+			Help: "Indicates if advanced network policies (ANP or CNP) are in use (1 if enabled, 0 if disabled)",
+		},
+	)
 )
 
 func init() {
-	metrics.Registry.MustRegister(PolicyReconciliations, PolicyWorkDuration, PolicyQueueDuration, PolicyObjectCount)
+	metrics.Registry.MustRegister(PolicyReconciliations, PolicyWorkDuration, PolicyQueueDuration, PolicyObjectCount, AdvancedNetworkPolicyEnabled)
 }
 
 func RecordWorkDuration(policyType string, duration time.Duration) {
@@ -98,14 +106,37 @@ func InitializePolicyObjectCounts(ctx context.Context, k8sClient client.Client) 
 		SetPolicyObjectCount("ClusterNetworkPolicy", count)
 	}
 
+	// Update advanced network policy enabled metric
+	UpdateAdvancedNetworkPolicyEnabled()
+
 	return nil
 }
 
 // Event-driven counter updates (no API calls)
 func OnPolicyCreated(policyType string) {
 	IncPolicyObjectCount(policyType)
+	UpdateAdvancedNetworkPolicyEnabled()
 }
 
 func OnPolicyDeleted(policyType string) {
 	DecPolicyObjectCount(policyType)
+	UpdateAdvancedNetworkPolicyEnabled()
+}
+
+// UpdateAdvancedNetworkPolicyEnabled sets the metric to 1 if ANP or CNP policies exist, 0 otherwise
+func UpdateAdvancedNetworkPolicyEnabled() {
+	anpCount := PolicyObjectCount.WithLabelValues("ApplicationNetworkPolicy")
+	cnpCount := PolicyObjectCount.WithLabelValues("ClusterNetworkPolicy")
+
+	anpMetric := &dto.Metric{}
+	cnpMetric := &dto.Metric{}
+
+	anpCount.Write(anpMetric)
+	cnpCount.Write(cnpMetric)
+
+	if anpMetric.GetGauge().GetValue() > 0 || cnpMetric.GetGauge().GetValue() > 0 {
+		AdvancedNetworkPolicyEnabled.Set(1)
+	} else {
+		AdvancedNetworkPolicyEnabled.Set(0)
+	}
 }

@@ -210,7 +210,7 @@ func (r *policyReconciler) reconcile(ctx context.Context, request reconcile.Requ
 func (r *policyReconciler) reconcileNetworkPolicy(ctx context.Context, networkPolicy *networking.NetworkPolicy) error {
 	start := time.Now()
 	defer func() {
-		metrics.RecordWorkDuration("NetworkPolicy", time.Since(start))
+		metrics.RecordPolicyReconcileLatency("NetworkPolicy", time.Since(start))
 	}()
 
 	isNewPolicy := len(networkPolicy.Finalizers) == 0
@@ -249,7 +249,7 @@ func (r *policyReconciler) cleanupNetworkPolicy(ctx context.Context, networkPoli
 func (r *policyReconciler) reconcileApplicationNetworkPolicy(ctx context.Context, applicationNetworkPolicy *policyinfo.ApplicationNetworkPolicy) error {
 	start := time.Now()
 	defer func() {
-		metrics.RecordWorkDuration("ApplicationNetworkPolicy", time.Since(start))
+		metrics.RecordPolicyReconcileLatency("ApplicationNetworkPolicy", time.Since(start))
 	}()
 
 	isNewPolicy := len(applicationNetworkPolicy.Finalizers) == 0
@@ -288,7 +288,7 @@ func (r *policyReconciler) cleanupApplicationNetworkPolicy(ctx context.Context, 
 func (r *policyReconciler) reconcileClusterNetworkPolicy(ctx context.Context, cnp *policyinfo.ClusterNetworkPolicy) error {
 	start := time.Now()
 	defer func() {
-		metrics.RecordWorkDuration("ClusterNetworkPolicy", time.Since(start))
+		metrics.RecordPolicyReconcileLatency("ClusterNetworkPolicy", time.Since(start))
 	}()
 
 	isNewPolicy := len(cnp.Finalizers) == 0

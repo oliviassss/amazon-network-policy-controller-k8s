@@ -21,18 +21,10 @@ var (
 		[]string{"policy_type", "result"},
 	)
 
-	PolicyWorkDuration = prometheus.NewHistogramVec(
+	PolicyReconcileLatency = prometheus.NewHistogramVec(
 		prometheus.HistogramOpts{
-			Name: "network_policy_workqueue_work_duration_seconds",
-			Help: "How long in seconds processing a policy from workqueue takes",
-		},
-		[]string{"policy_type"},
-	)
-
-	PolicyQueueDuration = prometheus.NewHistogramVec(
-		prometheus.HistogramOpts{
-			Name: "network_policy_workqueue_queue_duration_seconds",
-			Help: "How long in seconds a policy stays in workqueue before being processed",
+			Name: "network_policy_reconcile_duration_seconds",
+			Help: "How long in seconds reconciling a policy takes",
 		},
 		[]string{"policy_type"},
 	)
@@ -54,15 +46,11 @@ var (
 )
 
 func init() {
-	metrics.Registry.MustRegister(PolicyReconciliations, PolicyWorkDuration, PolicyQueueDuration, PolicyObjectCount, AdvancedNetworkPolicyEnabled)
+	metrics.Registry.MustRegister(PolicyReconciliations, PolicyReconcileLatency, PolicyObjectCount, AdvancedNetworkPolicyEnabled)
 }
 
-func RecordWorkDuration(policyType string, duration time.Duration) {
-	PolicyWorkDuration.WithLabelValues(policyType).Observe(duration.Seconds())
-}
-
-func RecordQueueDuration(policyType string, duration time.Duration) {
-	PolicyQueueDuration.WithLabelValues(policyType).Observe(duration.Seconds())
+func RecordPolicyReconcileLatency(policyType string, duration time.Duration) {
+	PolicyReconcileLatency.WithLabelValues(policyType).Observe(duration.Seconds())
 }
 
 func SetPolicyObjectCount(policyType string, count float64) {
@@ -82,33 +70,26 @@ func InitializePolicyObjectCounts(ctx context.Context, k8sClient client.Client) 
 	// Initialize NetworkPolicy count
 	var netpols networking.NetworkPolicyList
 	if err := k8sClient.List(ctx, &netpols, &client.ListOptions{}); err != nil {
-		SetPolicyObjectCount("NetworkPolicy", 0)
-	} else {
-		count := float64(len(netpols.Items))
-		SetPolicyObjectCount("NetworkPolicy", count)
+		return err
 	}
+	SetPolicyObjectCount("NetworkPolicy", float64(len(netpols.Items)))
 
 	// Initialize ApplicationNetworkPolicy count
 	var anps v1alpha1.ApplicationNetworkPolicyList
 	if err := k8sClient.List(ctx, &anps, &client.ListOptions{}); err != nil {
-		SetPolicyObjectCount("ApplicationNetworkPolicy", 0)
-	} else {
-		count := float64(len(anps.Items))
-		SetPolicyObjectCount("ApplicationNetworkPolicy", count)
+		return err
 	}
+	SetPolicyObjectCount("ApplicationNetworkPolicy", float64(len(anps.Items)))
 
 	// Initialize ClusterNetworkPolicy count
 	var cnps v1alpha1.ClusterNetworkPolicyList
 	if err := k8sClient.List(ctx, &cnps, &client.ListOptions{}); err != nil {
-		SetPolicyObjectCount("ClusterNetworkPolicy", 0)
-	} else {
-		count := float64(len(cnps.Items))
-		SetPolicyObjectCount("ClusterNetworkPolicy", count)
+		return err
 	}
+	SetPolicyObjectCount("ClusterNetworkPolicy", float64(len(cnps.Items)))
 
 	// Update advanced network policy enabled metric
 	UpdateAdvancedNetworkPolicyEnabled()
-
 	return nil
 }
 

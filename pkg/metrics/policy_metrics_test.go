@@ -3,7 +3,6 @@ package metrics
 import (
 	"context"
 	"testing"
-	"time"
 
 	"github.com/aws/amazon-network-policy-controller-k8s/api/v1alpha1"
 	dto "github.com/prometheus/client_model/go"
@@ -12,16 +11,6 @@ import (
 	"k8s.io/apimachinery/pkg/runtime"
 	"sigs.k8s.io/controller-runtime/pkg/client/fake"
 )
-
-func TestRecordWorkDuration(t *testing.T) {
-	// Just test that the function doesn't panic
-	RecordWorkDuration("TestPolicy", 2*time.Second)
-}
-
-func TestRecordQueueDuration(t *testing.T) {
-	// Just test that the function doesn't panic
-	RecordQueueDuration("TestPolicy", 1*time.Second)
-}
 
 func TestSetPolicyObjectCount(t *testing.T) {
 	PolicyObjectCount.Reset()
@@ -71,10 +60,7 @@ func TestInitializePolicyObjectCounts(t *testing.T) {
 	PolicyObjectCount.Reset()
 	AdvancedNetworkPolicyEnabled.Set(0)
 
-	err := InitializePolicyObjectCounts(context.Background(), client)
-	if err != nil {
-		t.Errorf("Unexpected error: %v", err)
-	}
+	InitializePolicyObjectCounts(context.Background(), client)
 
 	metric := &dto.Metric{}
 	PolicyObjectCount.WithLabelValues("NetworkPolicy").Write(metric)

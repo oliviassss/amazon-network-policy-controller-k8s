@@ -174,15 +174,23 @@ func main() {
 	// only if network policy controller is enabled
 	if enableNetworkPolicyController {
 		go func() {
-			// Wait for manager to start and cache to sync
 			<-mgr.Elected()
-			time.Sleep(2 * time.Second)
+			mgr.GetCache().WaitForCacheSync(ctx)
+			setupLog.Info("Initializing policy object counters...")
+			ticker := time.NewTicker(5 * time.Second)
+			defer ticker.Stop()
 
-			setupLog.Info("Initializing policy object counters after manager start")
-			if err := metrics.InitializePolicyObjectCounts(ctx, mgr.GetClient()); err != nil {
-				setupLog.Error(err, "Failed to initialize policy object counters after manager start")
-			} else {
-				setupLog.Info("Successfully initialized policy object counters after manager start")
+			for {
+				select {
+				case <-ctx.Done():
+					return
+				case <-ticker.C:
+					if err := metrics.InitializePolicyObjectCounts(ctx, mgr.GetClient()); err != nil {
+						continue
+					}
+					setupLog.Info("Initialized policy object counters")
+					return
+				}
 			}
 		}()
 	}

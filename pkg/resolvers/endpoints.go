@@ -103,6 +103,7 @@ func (r *defaultEndpointsResolver) computeEgressEndpoints(ctx context.Context, p
 
 func (r *defaultEndpointsResolver) computePodSelectorEndpoints(ctx context.Context, policy *networking.NetworkPolicy) ([]policyinfo.PodEndpoint, error) {
 	var podEndpoints []policyinfo.PodEndpoint
+	var skippedHostNetworkPods []string
 	podSelector, err := metav1.LabelSelectorAsSelector(&policy.Spec.PodSelector)
 	if err != nil {
 		return nil, errors.Wrap(err, "unable to get pod selector")
@@ -116,6 +117,11 @@ func (r *defaultEndpointsResolver) computePodSelectorEndpoints(ctx context.Conte
 		return nil, err
 	}
 	for _, pod := range podList.Items {
+		if pod.Spec.HostNetwork {
+			podName := fmt.Sprintf("%s/%s", pod.Namespace, pod.Name)
+			skippedHostNetworkPods = append(skippedHostNetworkPods, podName)
+			continue
+		}
 		if k8s.IsPodNetworkReady(&pod) {
 			podIP := k8s.GetPodIP(&pod)
 			podEndpoints = append(podEndpoints, policyinfo.PodEndpoint{
@@ -125,6 +131,9 @@ func (r *defaultEndpointsResolver) computePodSelectorEndpoints(ctx context.Conte
 				Namespace: pod.Namespace,
 			})
 		}
+	}
+	if len(skippedHostNetworkPods) > 0 {
+		r.logger.Info("Skipped hostNetwork pods", "policy", k8s.NamespacedName(policy), "pods", skippedHostNetworkPods)
 	}
 	r.logger.V(1).Info("Resolved pod selector endpoints", "policy", k8s.NamespacedName(policy), "pod endpoints", podEndpoints)
 	return podEndpoints, nil

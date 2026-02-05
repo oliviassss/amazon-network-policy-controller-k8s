@@ -281,6 +281,27 @@ func TestStripDownPodObject(t *testing.T) {
 		},
 	}
 
+	hostNetworkPod := &corev1.Pod{
+		ObjectMeta: metav1.ObjectMeta{
+			Name:      "hostnetwork-pod",
+			Namespace: "test-ns",
+			Labels:    map[string]string{"app": "test"},
+		},
+		Spec: corev1.PodSpec{
+			Containers: []corev1.Container{
+				{Name: "container1", Ports: []corev1.ContainerPort{{ContainerPort: 80}}},
+			},
+			HostNetwork: true,
+		},
+		Status: corev1.PodStatus{
+			Phase:   corev1.PodRunning,
+			PodIP:   "10.0.0.3",
+			HostIP:  "10.0.1.1",
+			PodIPs:  []corev1.PodIP{{IP: "10.0.0.3"}},
+			HostIPs: []corev1.HostIP{{IP: "10.0.1.1"}},
+		},
+	}
+
 	// Test succeeded pod
 	strippedSucceeded := stripDownPodObject(succeededPod)
 	assert.Equal(t, corev1.PodSucceeded, strippedSucceeded.Status.Phase, "Phase field must be preserved for succeeded pod")
@@ -290,4 +311,8 @@ func TestStripDownPodObject(t *testing.T) {
 	strippedRunning := stripDownPodObject(runningPod)
 	assert.Equal(t, corev1.PodRunning, strippedRunning.Status.Phase, "Phase field must be preserved for running pod")
 	assert.True(t, IsPodNetworkReady(strippedRunning), "IsPodNetworkReady should return true for running pod")
+
+	// Test hostNetwork pod
+	strippedHostNetwork := stripDownPodObject(hostNetworkPod)
+	assert.True(t, strippedHostNetwork.Spec.HostNetwork, "HostNetwork field must be preserved")
 }

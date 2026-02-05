@@ -1176,3 +1176,307 @@ func TestEndpointsResolver_ExcludesTerminalPods(t *testing.T) {
 	assert.Equal(t, "10.0.0.1", string(podEndpoints[0].PodIP))
 	assert.Equal(t, "running-pod", podEndpoints[0].Name)
 }
+
+func TestEndpointsResolver_ExcludesHostNetworkPods_Integration(t *testing.T) {
+	ctrl := gomock.NewController(t)
+	defer ctrl.Finish()
+
+	mockClient := mock_client.NewMockClient(ctrl)
+	resolver := NewEndpointsResolver(mockClient, logr.New(&log.NullLogSink{}))
+
+	// Create a regular pod (should be included)
+	regularPod := corev1.Pod{
+		ObjectMeta: metav1.ObjectMeta{
+			Name:      "regular-pod",
+			Namespace: "test-ns",
+			Labels:    map[string]string{"app": "test"},
+		},
+		Spec: corev1.PodSpec{
+			HostNetwork: false,
+		},
+		Status: corev1.PodStatus{
+			PodIP:  "10.0.0.1",
+			HostIP: "192.168.1.1",
+			Phase:  corev1.PodRunning,
+		},
+	}
+
+	// Create a hostNetwork pod (should be excluded)
+	hostNetworkPod := corev1.Pod{
+		ObjectMeta: metav1.ObjectMeta{
+			Name:      "hostnetwork-pod",
+			Namespace: "test-ns",
+			Labels:    map[string]string{"app": "test"},
+		},
+		Spec: corev1.PodSpec{
+			HostNetwork: true,
+		},
+		Status: corev1.PodStatus{
+			PodIP:  "192.168.1.1",
+			HostIP: "192.168.1.1",
+			Phase:  corev1.PodRunning,
+		},
+	}
+
+	// Create another regular pod (should be included)
+	regularPod2 := corev1.Pod{
+		ObjectMeta: metav1.ObjectMeta{
+			Name:      "regular-pod-2",
+			Namespace: "test-ns",
+			Labels:    map[string]string{"app": "test"},
+		},
+		Spec: corev1.PodSpec{
+			HostNetwork: false,
+		},
+		Status: corev1.PodStatus{
+			PodIP:  "10.0.0.2",
+			HostIP: "192.168.1.2",
+			Phase:  corev1.PodRunning,
+		},
+	}
+
+	mockClient.EXPECT().List(gomock.Any(), gomock.Any(), gomock.Any()).
+		DoAndReturn(func(ctx context.Context, list client.ObjectList, opts ...client.ListOption) error {
+			podList := list.(*corev1.PodList)
+			podList.Items = []corev1.Pod{regularPod, hostNetworkPod, regularPod2}
+			return nil
+		})
+
+	policy := &networking.NetworkPolicy{
+		ObjectMeta: metav1.ObjectMeta{
+			Name:      "test-policy",
+			Namespace: "test-ns",
+		},
+		Spec: networking.NetworkPolicySpec{
+			PodSelector: metav1.LabelSelector{
+				MatchLabels: map[string]string{"app": "test"},
+			},
+			PolicyTypes: []networking.PolicyType{
+				networking.PolicyTypeIngress,
+				networking.PolicyTypeEgress,
+			},
+		},
+	}
+
+	_, _, podEndpoints, err := resolver.Resolve(context.Background(), policy)
+
+	require.NoError(t, err)
+	assert.Len(t, podEndpoints, 2, "Should only include non-hostNetwork pods")
+
+	podNames := make(map[string]bool)
+	for _, pe := range podEndpoints {
+		podNames[pe.Name] = true
+	}
+
+	assert.True(t, podNames["regular-pod"], "regular-pod should be included")
+	assert.True(t, podNames["regular-pod-2"], "regular-pod-2 should be included")
+	assert.False(t, podNames["hostnetwork-pod"], "hostnetwork-pod should be excluded")
+
+	podIPs := make(map[string]bool)
+	for _, pe := range podEndpoints {
+		podIPs[string(pe.PodIP)] = true
+	}
+
+	assert.True(t, podIPs["10.0.0.1"], "regular-pod IP should be included")
+	assert.True(t, podIPs["10.0.0.2"], "regular-pod-2 IP should be included")
+	assert.False(t, podIPs["192.168.1.1"], "hostNetwork pod IP should not be included")
+}
+
+func TestEndpointsResolver_IncludesHostNetworkPodsInIngressEgressRules(t *testing.T) {
+	ctrl := gomock.NewController(t)
+	defer ctrl.Finish()
+
+	mockClient := mock_client.NewMockClient(ctrl)
+	resolver := NewEndpointsResolver(mockClient, logr.New(&log.NullLogSink{}))
+
+	targetPod := corev1.Pod{
+		ObjectMeta: metav1.ObjectMeta{
+			Name:      "target-pod",
+			Namespace: "test-ns",
+			Labels:    map[string]string{"role": "backend"},
+		},
+		Spec: corev1.PodSpec{
+			HostNetwork: false,
+		},
+		Status: corev1.PodStatus{
+			PodIP:  "10.0.0.1",
+			HostIP: "192.168.1.1",
+			Phase:  corev1.PodRunning,
+		},
+	}
+
+	hostNetworkMonitoringPod := corev1.Pod{
+		ObjectMeta: metav1.ObjectMeta{
+			Name:      "hostnetwork-monitoring-pod",
+			Namespace: "test-ns",
+			Labels:    map[string]string{"role": "monitoring"},
+		},
+		Spec: corev1.PodSpec{
+			HostNetwork: true,
+		},
+		Status: corev1.PodStatus{
+			PodIP:  "192.168.1.1",
+			HostIP: "192.168.1.1",
+			Phase:  corev1.PodRunning,
+		},
+	}
+
+	regularMonitoringPod := corev1.Pod{
+		ObjectMeta: metav1.ObjectMeta{
+			Name:      "regular-monitoring-pod",
+			Namespace: "test-ns",
+			Labels:    map[string]string{"role": "monitoring"},
+		},
+		Spec: corev1.PodSpec{
+			HostNetwork: false,
+		},
+		Status: corev1.PodStatus{
+			PodIP:  "10.0.0.2",
+			HostIP: "192.168.1.2",
+			Phase:  corev1.PodRunning,
+		},
+	}
+
+	hostNetworkDatabasePod := corev1.Pod{
+		ObjectMeta: metav1.ObjectMeta{
+			Name:      "hostnetwork-database-pod",
+			Namespace: "test-ns",
+			Labels:    map[string]string{"role": "database"},
+		},
+		Spec: corev1.PodSpec{
+			HostNetwork: true,
+		},
+		Status: corev1.PodStatus{
+			PodIP:  "192.168.1.3",
+			HostIP: "192.168.1.3",
+			Phase:  corev1.PodRunning,
+		},
+	}
+
+	regularDatabasePod := corev1.Pod{
+		ObjectMeta: metav1.ObjectMeta{
+			Name:      "regular-database-pod",
+			Namespace: "test-ns",
+			Labels:    map[string]string{"role": "database"},
+		},
+		Spec: corev1.PodSpec{
+			HostNetwork: false,
+		},
+		Status: corev1.PodStatus{
+			PodIP:  "10.0.0.3",
+			HostIP: "192.168.1.4",
+			Phase:  corev1.PodRunning,
+		},
+	}
+
+	// Mock List calls in order:
+	// 1. List backend pods for ingress port resolution (getIngressRulesPorts)
+	// 2. List monitoring pods for ingress rule IPs (getMatchingPodAddresses)
+	// 3. List database pods for egress rule IPs (getMatchingPodAddresses)
+	// 4. List services for egress cluster IPs (resolveServiceClusterIPs)
+	// 5. List backend pods for pod selector endpoints (computePodSelectorEndpoints)
+	gomock.InOrder(
+		// First call: List backend pods for ingress port resolution
+		mockClient.EXPECT().List(gomock.Any(), gomock.Any(), gomock.Any()).
+			DoAndReturn(func(ctx context.Context, list client.ObjectList, opts ...client.ListOption) error {
+				podList := list.(*corev1.PodList)
+				podList.Items = []corev1.Pod{targetPod}
+				return nil
+			}),
+		// Second call: List monitoring pods for ingress rule
+		mockClient.EXPECT().List(gomock.Any(), gomock.Any(), gomock.Any()).
+			DoAndReturn(func(ctx context.Context, list client.ObjectList, opts ...client.ListOption) error {
+				podList := list.(*corev1.PodList)
+				podList.Items = []corev1.Pod{hostNetworkMonitoringPod, regularMonitoringPod}
+				return nil
+			}),
+		// Third call: List database pods for egress rule
+		mockClient.EXPECT().List(gomock.Any(), gomock.Any(), gomock.Any()).
+			DoAndReturn(func(ctx context.Context, list client.ObjectList, opts ...client.ListOption) error {
+				podList := list.(*corev1.PodList)
+				podList.Items = []corev1.Pod{hostNetworkDatabasePod, regularDatabasePod}
+				return nil
+			}),
+		// Fourth call: List services for egress (empty)
+		mockClient.EXPECT().List(gomock.Any(), gomock.Any(), gomock.Any()).
+			DoAndReturn(func(ctx context.Context, list client.ObjectList, opts ...client.ListOption) error {
+				return nil
+			}),
+		// Fifth call: List backend pods for pod selector endpoints
+		mockClient.EXPECT().List(gomock.Any(), gomock.Any(), gomock.Any()).
+			DoAndReturn(func(ctx context.Context, list client.ObjectList, opts ...client.ListOption) error {
+				podList := list.(*corev1.PodList)
+				podList.Items = []corev1.Pod{targetPod}
+				return nil
+			}),
+	)
+
+	policy := &networking.NetworkPolicy{
+		ObjectMeta: metav1.ObjectMeta{
+			Name:      "backend-policy",
+			Namespace: "test-ns",
+		},
+		Spec: networking.NetworkPolicySpec{
+			PodSelector: metav1.LabelSelector{
+				MatchLabels: map[string]string{"role": "backend"},
+			},
+			PolicyTypes: []networking.PolicyType{
+				networking.PolicyTypeIngress,
+				networking.PolicyTypeEgress,
+			},
+			Ingress: []networking.NetworkPolicyIngressRule{
+				{
+					From: []networking.NetworkPolicyPeer{
+						{
+							PodSelector: &metav1.LabelSelector{
+								MatchLabels: map[string]string{"role": "monitoring"},
+							},
+						},
+					},
+				},
+			},
+			Egress: []networking.NetworkPolicyEgressRule{
+				{
+					To: []networking.NetworkPolicyPeer{
+						{
+							PodSelector: &metav1.LabelSelector{
+								MatchLabels: map[string]string{"role": "database"},
+							},
+						},
+					},
+				},
+			},
+		},
+	}
+
+	ingressEndpoints, egressEndpoints, podEndpoints, err := resolver.Resolve(context.Background(), policy)
+
+	require.NoError(t, err)
+
+	// 1. PodSelectorEndpoints should only include the target pod (not hostNetwork)
+	assert.Len(t, podEndpoints, 1, "Should only include non-hostNetwork pods in podSelectorEndpoints")
+	assert.Equal(t, "target-pod", podEndpoints[0].Name)
+	assert.Equal(t, "10.0.0.1", string(podEndpoints[0].PodIP))
+
+	// 2. IngressEndpoints should include BOTH hostNetwork and regular monitoring pods
+	assert.Len(t, ingressEndpoints, 2, "Should include both hostNetwork and regular pods in ingress rules")
+
+	ingressCIDRs := make(map[string]bool)
+	for _, ep := range ingressEndpoints {
+		ingressCIDRs[string(ep.CIDR)] = true
+	}
+
+	assert.True(t, ingressCIDRs["192.168.1.1"], "hostNetwork monitoring pod IP should be included in ingress rules")
+	assert.True(t, ingressCIDRs["10.0.0.2"], "regular monitoring pod IP should be included in ingress rules")
+
+	// 3. EgressEndpoints should include BOTH hostNetwork and regular database pods
+	assert.Len(t, egressEndpoints, 2, "Should include both hostNetwork and regular pods in egress rules")
+
+	egressCIDRs := make(map[string]bool)
+	for _, ep := range egressEndpoints {
+		egressCIDRs[string(ep.CIDR)] = true
+	}
+
+	assert.True(t, egressCIDRs["192.168.1.3"], "hostNetwork database pod IP should be included in egress rules")
+	assert.True(t, egressCIDRs["10.0.0.3"], "regular database pod IP should be included in egress rules")
+}

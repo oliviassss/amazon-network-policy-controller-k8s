@@ -83,7 +83,8 @@ func stripDownPodObject(pod *corev1.Pod) *corev1.Pod {
 		})
 	}
 	pod.Spec = corev1.PodSpec{
-		Containers: strippedContainers,
+		Containers:  strippedContainers,
+		HostNetwork: pod.Spec.HostNetwork,
 	}
 	pod.Status = corev1.PodStatus{
 		HostIP:  pod.Status.HostIP,

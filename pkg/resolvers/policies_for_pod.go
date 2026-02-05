@@ -38,7 +38,7 @@ func (r *defaultPolicyReferenceResolver) getReferredPoliciesForPod(ctx context.C
 			processedPolicies.Insert(k8s.NamespacedName(&pol))
 		}
 	}
-	r.logger.Info("Policies referred on the same namespace", "pod", k8s.NamespacedName(pod),
+	r.logger.V(1).Info("Policies referred on the same namespace", "pod", k8s.NamespacedName(pod),
 		"policies", referredPolicies)
 
 	for _, ref := range r.policyTracker.GetPoliciesWithNamespaceReferences().UnsortedList() {
@@ -66,7 +66,7 @@ func (r *defaultPolicyReferenceResolver) getReferredPoliciesForPod(ctx context.C
 		}
 	}
 
-	r.logger.Info("All referred policies", "pod", k8s.NamespacedName(pod), "policies", referredPolicies)
+	r.logger.V(1).Info("All referred policies", "pod", k8s.NamespacedName(pod), "policies", referredPolicies)
 	return referredPolicies, nil
 }
 
@@ -168,7 +168,7 @@ func (r *defaultPolicyReferenceResolver) getReferredApplicationNetworkPoliciesFo
 			processedPolicies.Insert(k8s.NamespacedName(&pol))
 		}
 	}
-	r.logger.Info("ANP Policies referred on the same namespace", "pod", k8s.NamespacedName(pod),
+	r.logger.V(1).Info("ANP Policies referred on the same namespace", "pod", k8s.NamespacedName(pod),
 		"policies", referredPolicies)
 
 	// Second loop: Process cross-namespace ANP policies
@@ -198,7 +198,7 @@ func (r *defaultPolicyReferenceResolver) getReferredApplicationNetworkPoliciesFo
 		}
 	}
 
-	r.logger.Info("All referred ANP policies", "pod", k8s.NamespacedName(pod), "policies", referredPolicies)
+	r.logger.V(1).Info("All referred ANP policies", "pod", k8s.NamespacedName(pod), "policies", referredPolicies)
 	return referredPolicies, nil
 }
 

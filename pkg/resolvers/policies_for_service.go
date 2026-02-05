@@ -24,7 +24,7 @@ func (r *defaultPolicyReferenceResolver) getReferredPoliciesForService(ctx conte
 
 	// Get potential matches using the reusable helper
 	potentialMatches := r.getPotentialPolicyMatches(svc, r.policyTracker.GetPoliciesWithEgressRules(), r.policyTracker.GetPoliciesWithNamespaceReferences())
-	r.logger.Info("Potential matches", "policies", potentialMatches.UnsortedList(), "svc", k8s.NamespacedName(svc))
+	r.logger.V(1).Info("Potential matches", "policies", potentialMatches.UnsortedList(), "svc", k8s.NamespacedName(svc))
 
 	var networkPolicyList []networking.NetworkPolicy
 	for policyRef := range potentialMatches {
@@ -58,7 +58,7 @@ func (r *defaultPolicyReferenceResolver) getReferredApplicationNetworkPoliciesFo
 
 	// Get potential ANP matches using the same logic as NetworkPolicy
 	potentialMatches := r.getPotentialPolicyMatches(svc, r.policyTracker.GetApplicationNetworkPoliciesWithEgressRules(), r.policyTracker.GetApplicationNetworkPoliciesWithNamespaceReferences())
-	r.logger.Info("Potential ANP matches", "policies", potentialMatches.UnsortedList(), "svc", k8s.NamespacedName(svc))
+	r.logger.V(1).Info("Potential ANP matches", "policies", potentialMatches.UnsortedList(), "svc", k8s.NamespacedName(svc))
 
 	var anpList []policyinfo.ApplicationNetworkPolicy
 	for policyRef := range potentialMatches {

@@ -20,6 +20,7 @@ import (
 	"context"
 	"net/http"
 	"os"
+	"time"
 
 	"github.com/go-logr/logr"
 	"github.com/spf13/pflag"
@@ -44,6 +45,7 @@ import (
 	"github.com/aws/amazon-network-policy-controller-k8s/pkg/config"
 	"github.com/aws/amazon-network-policy-controller-k8s/pkg/crd"
 	"github.com/aws/amazon-network-policy-controller-k8s/pkg/k8s"
+	"github.com/aws/amazon-network-policy-controller-k8s/pkg/metrics"
 	"github.com/aws/amazon-network-policy-controller-k8s/pkg/policyendpoints"
 	"github.com/aws/amazon-network-policy-controller-k8s/pkg/utils/configmap"
 	"github.com/aws/amazon-network-policy-controller-k8s/pkg/version"
@@ -167,6 +169,32 @@ func main() {
 	}
 
 	setupLog.Info("starting controller manager")
+
+	// Initialize metrics after manager cache is ready
+	// only if network policy controller is enabled
+	if enableNetworkPolicyController {
+		go func() {
+			<-mgr.Elected()
+			mgr.GetCache().WaitForCacheSync(ctx)
+			setupLog.Info("Initializing policy object counters...")
+			ticker := time.NewTicker(5 * time.Second)
+			defer ticker.Stop()
+
+			for {
+				select {
+				case <-ctx.Done():
+					return
+				case <-ticker.C:
+					if err := metrics.InitializePolicyObjectCounts(ctx, mgr.GetClient()); err != nil {
+						continue
+					}
+					setupLog.Info("Initialized policy object counters")
+					return
+				}
+			}
+		}()
+	}
+
 	if err := mgr.Start(ctx); err != nil {
 		setupLog.Error(err, "problem running controller manager")
 		os.Exit(1)
